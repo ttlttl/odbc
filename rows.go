@@ -7,6 +7,7 @@ package odbc
 import (
 	"database/sql/driver"
 	"io"
+	"reflect"
 
 	"github.com/alexbrainman/odbc/api"
 )
@@ -21,6 +22,26 @@ func (r *Rows) Columns() []string {
 		names[i] = r.os.Cols[i].Name()
 	}
 	return names
+}
+
+func (r *Rows) ColumnTypeScanType(index int) reflect.Type {
+	return r.os.Cols[index].ScanType()
+}
+
+func (r *Rows) ColumnTypeDatabaseTypeName(index int) string {
+	return r.os.Cols[index].DatabaseTypeName()
+}
+
+func (r *Rows) ColumnTypeLength(index int) (int64, bool) {
+	return r.os.Cols[index].Length()
+}
+
+func (r *Rows) ColumnTypeNullable(index int) (bool, bool) {
+	return r.os.Cols[index].Nullable()
+}
+
+func (r *Rows) ColumnTypePrecisionScale(index int) (int64, int64, bool) {
+	return r.os.Cols[index].PrecisionScale()
 }
 
 func (r *Rows) Next(dest []driver.Value) error {

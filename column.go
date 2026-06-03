@@ -8,6 +8,7 @@ import (
 	"database/sql/driver"
 	"errors"
 	"fmt"
+	"reflect"
 	"time"
 	"unsafe"
 
@@ -37,26 +38,31 @@ type Column interface {
 	Name() string
 	Bind(h api.SQLHSTMT, idx int) (bool, error)
 	Value(h api.SQLHSTMT, idx int) (driver.Value, error)
+	DatabaseTypeName() string
+	Length() (int64, bool)
+	Nullable() (bool, bool)
+	PrecisionScale() (int64, int64, bool)
+	ScanType() reflect.Type
 }
 
-func describeColumn(h api.SQLHSTMT, idx int, namebuf []uint16) (namelen int, sqltype api.SQLSMALLINT, size api.SQLULEN, ret api.SQLRETURN) {
-	var l, decimal, nullable api.SQLSMALLINT
+func describeColumn(h api.SQLHSTMT, idx int, namebuf []uint16) (namelen int, sqltype api.SQLSMALLINT, size api.SQLULEN, decimal api.SQLSMALLINT, nullable api.SQLSMALLINT, ret api.SQLRETURN) {
+	var l api.SQLSMALLINT
 	ret = api.SQLDescribeCol(h, api.SQLUSMALLINT(idx+1),
 		(*api.SQLWCHAR)(unsafe.Pointer(&namebuf[0])),
 		api.SQLSMALLINT(len(namebuf)), &l,
 		&sqltype, &size, &decimal, &nullable)
-	return int(l), sqltype, size, ret
+	return int(l), sqltype, size, decimal, nullable, ret
 }
 
 // TODO(brainman): did not check for MS SQL timestamp
 
 func NewColumn(h api.SQLHSTMT, idx int) (Column, error) {
 	namebuf := make([]uint16, 150)
-	namelen, sqltype, size, ret := describeColumn(h, idx, namebuf)
+	namelen, sqltype, size, decimal, nullable, ret := describeColumn(h, idx, namebuf)
 	if ret == api.SQL_SUCCESS_WITH_INFO && namelen > len(namebuf) {
 		// try again with bigger buffer
 		namebuf = make([]uint16, namelen)
-		namelen, sqltype, size, ret = describeColumn(h, idx, namebuf)
+		namelen, sqltype, size, decimal, nullable, ret = describeColumn(h, idx, namebuf)
 	}
 	if IsError(ret) {
 		return nil, NewError("SQLDescribeCol", h)
@@ -66,8 +72,11 @@ func NewColumn(h api.SQLHSTMT, idx int) (Column, error) {
 		return nil, errors.New("Failed to allocate column name buffer")
 	}
 	b := &BaseColumn{
-		name:    api.UTF16ToString(namebuf[:namelen]),
-		SQLType: sqltype,
+		name:         api.UTF16ToString(namebuf[:namelen]),
+		SQLType:      sqltype,
+		Size:         size,
+		Decimal:      decimal,
+		NullableCode: nullable,
 	}
 	switch sqltype {
 	case api.SQL_BIT:
@@ -112,13 +121,128 @@ func NewColumn(h api.SQLHSTMT, idx int) (Column, error) {
 
 // BaseColumn implements common column functionality.
 type BaseColumn struct {
-	name    string
-	SQLType api.SQLSMALLINT
-	CType   api.SQLSMALLINT
+	name         string
+	SQLType      api.SQLSMALLINT
+	CType        api.SQLSMALLINT
+	Size         api.SQLULEN
+	Decimal      api.SQLSMALLINT
+	NullableCode api.SQLSMALLINT
 }
 
 func (c *BaseColumn) Name() string {
 	return c.name
+}
+
+func (c *BaseColumn) DatabaseTypeName() string {
+	switch c.SQLType {
+	case api.SQL_BIT:
+		return "BIT"
+	case api.SQL_TINYINT:
+		return "TINYINT"
+	case api.SQL_SMALLINT:
+		return "SMALLINT"
+	case api.SQL_INTEGER:
+		return "INTEGER"
+	case api.SQL_BIGINT:
+		return "BIGINT"
+	case api.SQL_NUMERIC:
+		return "NUMERIC"
+	case api.SQL_DECIMAL:
+		return "DECIMAL"
+	case api.SQL_FLOAT:
+		return "FLOAT"
+	case api.SQL_REAL:
+		return "REAL"
+	case api.SQL_DOUBLE:
+		return "DOUBLE"
+	case api.SQL_TYPE_TIMESTAMP, api.SQL_TIMESTAMP:
+		return "TIMESTAMP"
+	case api.SQL_TYPE_DATE, api.SQL_DATE:
+		return "DATE"
+	case api.SQL_TYPE_TIME, api.SQL_TIME, api.SQL_SS_TIME2:
+		return "TIME"
+	case api.SQL_CHAR:
+		return "CHAR"
+	case api.SQL_VARCHAR:
+		return "VARCHAR"
+	case api.SQL_WCHAR:
+		return "WCHAR"
+	case api.SQL_WVARCHAR:
+		return "WVARCHAR"
+	case api.SQL_LONGVARCHAR:
+		return "LONGVARCHAR"
+	case api.SQL_WLONGVARCHAR:
+		return "WLONGVARCHAR"
+	case api.SQL_BINARY:
+		return "BINARY"
+	case api.SQL_VARBINARY:
+		return "VARBINARY"
+	case api.SQL_LONGVARBINARY:
+		return "LONGVARBINARY"
+	case api.SQL_GUID:
+		return "GUID"
+	case api.SQL_SS_XML:
+		return "XML"
+	default:
+		return ""
+	}
+}
+
+func (c *BaseColumn) Length() (int64, bool) {
+	switch c.SQLType {
+	case api.SQL_CHAR, api.SQL_VARCHAR, api.SQL_WCHAR, api.SQL_WVARCHAR,
+		api.SQL_LONGVARCHAR, api.SQL_WLONGVARCHAR,
+		api.SQL_BINARY, api.SQL_VARBINARY, api.SQL_LONGVARBINARY:
+		return int64(c.Size), true
+	default:
+		return 0, false
+	}
+}
+
+func (c *BaseColumn) Nullable() (bool, bool) {
+	switch c.NullableCode {
+	case 0:
+		return false, true
+	case 1:
+		return true, true
+	default:
+		return false, false
+	}
+}
+
+func (c *BaseColumn) PrecisionScale() (int64, int64, bool) {
+	switch c.SQLType {
+	case api.SQL_NUMERIC, api.SQL_DECIMAL:
+		return int64(c.Size), int64(c.Decimal), true
+	default:
+		return 0, 0, false
+	}
+}
+
+func (c *BaseColumn) ScanType() reflect.Type {
+	switch c.CType {
+	case api.SQL_C_BIT:
+		return reflect.TypeOf(false)
+	case api.SQL_C_LONG:
+		return reflect.TypeOf(int32(0))
+	case api.SQL_C_SBIGINT:
+		return reflect.TypeOf(int64(0))
+	case api.SQL_C_DOUBLE:
+		return reflect.TypeOf(float64(0))
+	case api.SQL_C_CHAR, api.SQL_C_WCHAR:
+		return reflect.TypeOf("")
+	case api.SQL_C_TYPE_TIMESTAMP, api.SQL_C_DATE, api.SQL_C_TIME:
+		return reflect.TypeOf(time.Time{})
+	case api.SQL_C_BINARY:
+		if c.SQLType == api.SQL_SS_TIME2 {
+			return reflect.TypeOf(time.Time{})
+		}
+		return reflect.TypeOf([]byte{})
+	case api.SQL_C_GUID:
+		return reflect.TypeOf("")
+	default:
+		return reflect.TypeOf(new(interface{})).Elem()
+	}
 }
 
 func (c *BaseColumn) Value(buf []byte) (driver.Value, error) {
