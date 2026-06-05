@@ -340,12 +340,27 @@ func NewVariableWidthColumn(b *BaseColumn, ctype api.SQLSMALLINT, colWidth api.S
 		b.CType = ctype
 		return &NonBindableColumn{b}, nil
 	}
-	// Some ODBC drivers report a smaller display size for expression columns
-	// than the value returned by SQLFetch. Reading variable width values with
-	// SQLGetData avoids truncating bound buffers and prevents slice bounds
-	// panics when the reported length is larger than the allocated buffer.
-	b.CType = ctype
-	return &NonBindableColumn{b}, nil
+	l := int(colWidth)
+	switch ctype {
+	case api.SQL_C_WCHAR:
+		l += 1 // room for null-termination character
+		l *= 2 // wchars take 2 bytes each
+	case api.SQL_C_CHAR:
+		l += 1 // room for null-termination character
+	case api.SQL_C_BINARY:
+		// nothing to do
+	default:
+		return nil, fmt.Errorf("do not know how wide column of ctype %d is", ctype)
+	}
+	if l < 1024 {
+		// Some ODBC drivers report a smaller display size for expression columns
+		// than the value returned by SQLFetch. Use a larger minimum buffer to
+		// keep common short values bound without truncation.
+		l = 1024
+	}
+	c := NewBindableColumn(b, ctype, l)
+	c.IsVariableWidth = true
+	return c, nil
 }
 
 func (c *BindableColumn) Bind(h api.SQLHSTMT, idx int) (bool, error) {
@@ -370,6 +385,12 @@ func (c *BindableColumn) Value(h api.SQLHSTMT, idx int) (driver.Value, error) {
 	}
 	if !c.IsVariableWidth && int(c.Len) != c.Size {
 		return nil, fmt.Errorf("wrong column #%d length %d returned, %d expected", idx, c.Len, c.Size)
+	}
+	if c.Len < 0 {
+		return nil, fmt.Errorf("column #%d returned invalid data length %d", idx, c.Len)
+	}
+	if int(c.Len) > len(c.Buffer) {
+		return nil, fmt.Errorf("column #%d data length %d exceeds buffer size %d", idx, c.Len, len(c.Buffer))
 	}
 	return c.BaseColumn.Value(c.Buffer[:c.Len])
 }
