@@ -104,7 +104,7 @@ func NewColumn(h api.SQLHSTMT, idx int, unicodeResults bool) (Column, error) {
 		return NewBindableColumn(b, api.SQL_C_GUID, int(unsafe.Sizeof(v))), nil
 	case api.SQL_CHAR, api.SQL_VARCHAR:
 		if unicodeResults {
-			return NewVariableWidthColumn(b, api.SQL_C_WCHAR, size)
+			return NewNonBindableColumn(b, api.SQL_C_WCHAR), nil
 		}
 		return NewVariableWidthColumn(b, api.SQL_C_CHAR, size)
 	case api.SQL_WCHAR, api.SQL_WVARCHAR:
@@ -113,7 +113,7 @@ func NewColumn(h api.SQLHSTMT, idx int, unicodeResults bool) (Column, error) {
 		return NewVariableWidthColumn(b, api.SQL_C_BINARY, size)
 	case api.SQL_LONGVARCHAR:
 		if unicodeResults {
-			return NewVariableWidthColumn(b, api.SQL_C_WCHAR, 0)
+			return NewNonBindableColumn(b, api.SQL_C_WCHAR), nil
 		}
 		return NewVariableWidthColumn(b, api.SQL_C_CHAR, 0)
 	case api.SQL_WLONGVARCHAR, api.SQL_SS_XML:
@@ -406,6 +406,11 @@ func (c *BindableColumn) Value(h api.SQLHSTMT, idx int) (driver.Value, error) {
 // limit for their width.
 type NonBindableColumn struct {
 	*BaseColumn
+}
+
+func NewNonBindableColumn(b *BaseColumn, ctype api.SQLSMALLINT) *NonBindableColumn {
+	b.CType = ctype
+	return &NonBindableColumn{b}
 }
 
 func (c *NonBindableColumn) Bind(h api.SQLHSTMT, idx int) (bool, error) {

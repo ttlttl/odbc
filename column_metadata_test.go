@@ -60,6 +60,16 @@ func TestNewVariableWidthColumnUsesMinimumBuffer(t *testing.T) {
 	}
 }
 
+func TestNewColumnUsesGetDataForUnicodeText(t *testing.T) {
+	col := NewNonBindableColumn(&BaseColumn{name: "name", SQLType: api.SQL_VARCHAR, Size: 7}, api.SQL_C_WCHAR)
+	if _, ok := interface{}(col).(*NonBindableColumn); !ok {
+		t.Fatalf("NewNonBindableColumn returned %T, want *NonBindableColumn", col)
+	}
+	if got := col.ScanType(); got != reflect.TypeOf("") {
+		t.Fatalf("ScanType() = %v, want string", got)
+	}
+}
+
 func assertTypeName(t *testing.T, rows *Rows, index int, want string) {
 	t.Helper()
 	if got := rows.ColumnTypeDatabaseTypeName(index); got != want {
