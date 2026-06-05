@@ -340,21 +340,12 @@ func NewVariableWidthColumn(b *BaseColumn, ctype api.SQLSMALLINT, colWidth api.S
 		b.CType = ctype
 		return &NonBindableColumn{b}, nil
 	}
-	l := int(colWidth)
-	switch ctype {
-	case api.SQL_C_WCHAR:
-		l += 1 // room for null-termination character
-		l *= 2 // wchars take 2 bytes each
-	case api.SQL_C_CHAR:
-		l += 1 // room for null-termination character
-	case api.SQL_C_BINARY:
-		// nothing to do
-	default:
-		return nil, fmt.Errorf("do not know how wide column of ctype %d is", ctype)
-	}
-	c := NewBindableColumn(b, ctype, l)
-	c.IsVariableWidth = true
-	return c, nil
+	// Some ODBC drivers report a smaller display size for expression columns
+	// than the value returned by SQLFetch. Reading variable width values with
+	// SQLGetData avoids truncating bound buffers and prevents slice bounds
+	// panics when the reported length is larger than the allocated buffer.
+	b.CType = ctype
+	return &NonBindableColumn{b}, nil
 }
 
 func (c *BindableColumn) Bind(h api.SQLHSTMT, idx int) (bool, error) {

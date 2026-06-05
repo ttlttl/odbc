@@ -46,6 +46,16 @@ func TestRowsColumnTypeMetadata(t *testing.T) {
 	}
 }
 
+func TestNewVariableWidthColumnUsesGetData(t *testing.T) {
+	col, err := NewVariableWidthColumn(&BaseColumn{name: "name", SQLType: api.SQL_VARCHAR, Size: 7}, api.SQL_C_CHAR, 7)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := col.(*NonBindableColumn); !ok {
+		t.Fatalf("NewVariableWidthColumn returned %T, want *NonBindableColumn", col)
+	}
+}
+
 func assertTypeName(t *testing.T, rows *Rows, index int, want string) {
 	t.Helper()
 	if got := rows.ColumnTypeDatabaseTypeName(index); got != want {
