@@ -19,6 +19,7 @@ type Conn struct {
 	tx               *Tx
 	bad              bool
 	isMSAccessDriver bool
+	unicodeResults   bool
 }
 
 var accessDriverSubstr = strings.ToUpper(strings.Replace("DRIVER={Microsoft Access Driver", " ", "", -1))
@@ -36,7 +37,8 @@ func (d *Driver) Open(dsn string) (driver.Conn, error) {
 	h := api.SQLHDBC(out)
 	drv.Stats.updateHandleCount(api.SQL_HANDLE_DBC, 1)
 
-	b := api.StringToUTF16(dsn)
+	odbcDSN, unicodeResults := parseDriverOptions(dsn)
+	b := api.StringToUTF16(odbcDSN)
 	ret = api.SQLDriverConnect(h, 0,
 		(*api.SQLWCHAR)(unsafe.Pointer(&b[0])), api.SQL_NTS,
 		nil, 0, nil, api.SQL_DRIVER_NOPROMPT)
@@ -44,8 +46,26 @@ func (d *Driver) Open(dsn string) (driver.Conn, error) {
 		defer releaseHandle(h)
 		return nil, NewError("SQLDriverConnect", h)
 	}
-	isAccess := strings.Contains(strings.ToUpper(strings.Replace(dsn, " ", "", -1)), accessDriverSubstr)
-	return &Conn{h: h, isMSAccessDriver: isAccess}, nil
+	isAccess := strings.Contains(strings.ToUpper(strings.Replace(odbcDSN, " ", "", -1)), accessDriverSubstr)
+	return &Conn{h: h, isMSAccessDriver: isAccess, unicodeResults: unicodeResults}, nil
+}
+
+func parseDriverOptions(dsn string) (string, bool) {
+	parts := strings.Split(dsn, ";")
+	kept := make([]string, 0, len(parts))
+	unicodeResults := false
+	for _, part := range parts {
+		key, value, ok := strings.Cut(part, "=")
+		if ok && strings.EqualFold(strings.TrimSpace(key), "GraphNGUnicodeResults") {
+			switch strings.ToLower(strings.TrimSpace(value)) {
+			case "1", "true", "yes", "on":
+				unicodeResults = true
+			}
+			continue
+		}
+		kept = append(kept, part)
+	}
+	return strings.Join(kept, ";"), unicodeResults
 }
 
 func (c *Conn) Close() (err error) {

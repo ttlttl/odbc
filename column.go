@@ -56,7 +56,7 @@ func describeColumn(h api.SQLHSTMT, idx int, namebuf []uint16) (namelen int, sql
 
 // TODO(brainman): did not check for MS SQL timestamp
 
-func NewColumn(h api.SQLHSTMT, idx int) (Column, error) {
+func NewColumn(h api.SQLHSTMT, idx int, unicodeResults bool) (Column, error) {
 	namebuf := make([]uint16, 150)
 	namelen, sqltype, size, decimal, nullable, ret := describeColumn(h, idx, namebuf)
 	if ret == api.SQL_SUCCESS_WITH_INFO && namelen > len(namebuf) {
@@ -103,12 +103,18 @@ func NewColumn(h api.SQLHSTMT, idx int) (Column, error) {
 		var v api.SQLGUID
 		return NewBindableColumn(b, api.SQL_C_GUID, int(unsafe.Sizeof(v))), nil
 	case api.SQL_CHAR, api.SQL_VARCHAR:
+		if unicodeResults {
+			return NewVariableWidthColumn(b, api.SQL_C_WCHAR, size)
+		}
 		return NewVariableWidthColumn(b, api.SQL_C_CHAR, size)
 	case api.SQL_WCHAR, api.SQL_WVARCHAR:
 		return NewVariableWidthColumn(b, api.SQL_C_WCHAR, size)
 	case api.SQL_BINARY, api.SQL_VARBINARY:
 		return NewVariableWidthColumn(b, api.SQL_C_BINARY, size)
 	case api.SQL_LONGVARCHAR:
+		if unicodeResults {
+			return NewVariableWidthColumn(b, api.SQL_C_WCHAR, 0)
+		}
 		return NewVariableWidthColumn(b, api.SQL_C_CHAR, 0)
 	case api.SQL_WLONGVARCHAR, api.SQL_SS_XML:
 		return NewVariableWidthColumn(b, api.SQL_C_WCHAR, 0)

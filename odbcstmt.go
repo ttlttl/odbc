@@ -18,9 +18,10 @@ import (
 // TODO(brainman): see if I could use SQLExecDirect anywhere
 
 type ODBCStmt struct {
-	h          api.SQLHSTMT
-	Parameters []Parameter
-	Cols       []Column
+	h              api.SQLHSTMT
+	Parameters     []Parameter
+	Cols           []Column
+	unicodeResults bool
 	// locking/lifetime
 	mu         sync.Mutex
 	usedByStmt bool
@@ -51,9 +52,10 @@ func (c *Conn) PrepareODBCStmt(query string) (*ODBCStmt, error) {
 		return nil, err
 	}
 	return &ODBCStmt{
-		h:          h,
-		Parameters: ps,
-		usedByStmt: true,
+		h:              h,
+		Parameters:     ps,
+		unicodeResults: c.unicodeResults,
+		usedByStmt:     true,
 	}, nil
 }
 
@@ -137,7 +139,7 @@ func (s *ODBCStmt) BindColumns() error {
 	s.Cols = make([]Column, n)
 	binding := true
 	for i := range s.Cols {
-		c, err := NewColumn(s.h, i)
+		c, err := NewColumn(s.h, i, s.unicodeResults)
 		if err != nil {
 			return err
 		}
