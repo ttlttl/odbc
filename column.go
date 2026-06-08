@@ -17,8 +17,32 @@ import (
 
 type BufferLen api.SQLLEN
 
+func normalizeBufferLen(l BufferLen) BufferLen {
+	if l <= 0 {
+		return l
+	}
+	if l <= BufferLen(1<<32-1) {
+		if signed := int32(uint32(l)); signed < 0 {
+			return BufferLen(signed)
+		}
+	}
+	return l
+}
+
 func (l *BufferLen) IsNull() bool {
-	return *l == api.SQL_NULL_DATA
+	return normalizeBufferLen(*l) == BufferLen(api.SQL_NULL_DATA)
+}
+
+func (l *BufferLen) IsNoTotal() bool {
+	return normalizeBufferLen(*l) == BufferLen(api.SQL_NO_TOTAL)
+}
+
+func (l *BufferLen) Int() (int, bool) {
+	n := normalizeBufferLen(*l)
+	if n < 0 {
+		return 0, false
+	}
+	return int(n), true
 }
 
 func (l *BufferLen) GetData(h api.SQLHSTMT, idx int, ctype api.SQLSMALLINT, buf []byte) api.SQLRETURN {
@@ -389,16 +413,17 @@ func (c *BindableColumn) Value(h api.SQLHSTMT, idx int) (driver.Value, error) {
 		// is NULL
 		return nil, nil
 	}
-	if !c.IsVariableWidth && int(c.Len) != c.Size {
-		return nil, fmt.Errorf("wrong column #%d length %d returned, %d expected", idx, c.Len, c.Size)
-	}
-	if c.Len < 0 {
+	n, ok := c.Len.Int()
+	if !ok {
 		return nil, fmt.Errorf("column #%d returned invalid data length %d", idx, c.Len)
 	}
-	if int(c.Len) > len(c.Buffer) {
+	if !c.IsVariableWidth && n != c.Size {
+		return nil, fmt.Errorf("wrong column #%d length %d returned, %d expected", idx, c.Len, c.Size)
+	}
+	if n > len(c.Buffer) {
 		return nil, fmt.Errorf("column #%d data length %d exceeds buffer size %d", idx, c.Len, len(c.Buffer))
 	}
-	return c.BaseColumn.Value(c.Buffer[:c.Len])
+	return c.BaseColumn.Value(c.Buffer[:n])
 }
 
 // NonBindableColumn provide access to columns, that can't be bound.
@@ -430,12 +455,19 @@ loop:
 				// is NULL
 				return nil, nil
 			}
-			if int(l) > len(b) {
+			n, ok := l.Int()
+			if !ok {
+				return nil, fmt.Errorf("column #%d returned invalid data length %d", idx, l)
+			}
+			if n > len(b) {
 				return nil, fmt.Errorf("too much data returned: %d bytes returned, but buffer size is %d", l, cap(b))
 			}
-			total = append(total, b[:l]...)
+			total = append(total, b[:n]...)
 			break loop
 		case api.SQL_SUCCESS_WITH_INFO:
+			if l.IsNull() {
+				return nil, nil
+			}
 			err := NewError("SQLGetData", h).(*Error)
 			if len(err.Diag) > 0 {
 				truncated := false
@@ -457,12 +489,15 @@ loop:
 				i-- // remove null-termination character
 			}
 			total = append(total, b[:i]...)
-			if l != api.SQL_NO_TOTAL {
+			if !l.IsNoTotal() {
 				// odbc gives us a hint about remaining data,
 				// lets get it in one go.
-				n := int(l) // total bytes for our data
-				n -= i      // subtract already received
-				n += 2      // room for biggest (wchar) null-terminator
+				n, ok := l.Int() // total bytes for our data
+				if !ok {
+					return nil, fmt.Errorf("column #%d returned invalid data length %d", idx, l)
+				}
+				n -= i // subtract already received
+				n += 2 // room for biggest (wchar) null-terminator
 				if len(b) < n {
 					b = make([]byte, n)
 				}

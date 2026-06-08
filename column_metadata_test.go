@@ -70,6 +70,32 @@ func TestNewColumnUsesGetDataForUnicodeText(t *testing.T) {
 	}
 }
 
+func TestBufferLenRecognizesUnsigned32BitIndicators(t *testing.T) {
+	nullLen := BufferLen(api.SQLLEN(0xffffffff))
+	if !nullLen.IsNull() {
+		t.Fatalf("IsNull() = false for unsigned 32-bit SQL_NULL_DATA indicator")
+	}
+	if _, ok := nullLen.Int(); ok {
+		t.Fatalf("Int() ok = true for unsigned 32-bit SQL_NULL_DATA indicator")
+	}
+
+	noTotalLen := BufferLen(api.SQLLEN(0xfffffffc))
+	if !noTotalLen.IsNoTotal() {
+		t.Fatalf("IsNoTotal() = false for unsigned 32-bit SQL_NO_TOTAL indicator")
+	}
+	if _, ok := noTotalLen.Int(); ok {
+		t.Fatalf("Int() ok = true for unsigned 32-bit SQL_NO_TOTAL indicator")
+	}
+
+	regularLen := BufferLen(api.SQLLEN(1024))
+	if regularLen.IsNull() || regularLen.IsNoTotal() {
+		t.Fatalf("regular positive length was treated as an indicator")
+	}
+	if n, ok := regularLen.Int(); !ok || n != 1024 {
+		t.Fatalf("Int() = (%d, %v), want (1024, true)", n, ok)
+	}
+}
+
 func assertTypeName(t *testing.T, rows *Rows, index int, want string) {
 	t.Helper()
 	if got := rows.ColumnTypeDatabaseTypeName(index); got != want {
