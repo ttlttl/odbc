@@ -154,6 +154,9 @@ func NewColumn(h api.SQLHSTMT, idx int, unicodeResults bool) (Column, error) {
 		}
 		return NewVariableWidthColumn(b, api.SQL_C_CHAR, size)
 	case api.SQL_WCHAR, api.SQL_WVARCHAR:
+		if unicodeResults {
+			return NewNonBindableColumn(b, api.SQL_C_WCHAR), nil
+		}
 		return NewVariableWidthColumn(b, api.SQL_C_WCHAR, size)
 	case api.SQL_BINARY, api.SQL_VARBINARY:
 		return NewVariableWidthColumn(b, api.SQL_C_BINARY, size)
@@ -163,6 +166,9 @@ func NewColumn(h api.SQLHSTMT, idx int, unicodeResults bool) (Column, error) {
 		}
 		return NewVariableWidthColumn(b, api.SQL_C_CHAR, 0)
 	case api.SQL_WLONGVARCHAR, api.SQL_SS_XML:
+		if unicodeResults {
+			return NewNonBindableColumn(b, api.SQL_C_WCHAR), nil
+		}
 		return NewVariableWidthColumn(b, api.SQL_C_WCHAR, 0)
 	case api.SQL_LONGVARBINARY:
 		return NewVariableWidthColumn(b, api.SQL_C_BINARY, 0)
