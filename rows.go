@@ -45,6 +45,11 @@ func (r *Rows) ColumnTypePrecisionScale(index int) (int64, int64, bool) {
 }
 
 func (r *Rows) Next(dest []driver.Value) error {
+	for _, col := range r.os.Cols {
+		if col, ok := col.(beforeFetchColumn); ok {
+			col.BeforeFetch()
+		}
+	}
 	ret := api.SQLFetch(r.os.h)
 	if ret == api.SQL_NO_DATA {
 		return io.EOF

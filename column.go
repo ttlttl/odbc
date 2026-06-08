@@ -87,6 +87,10 @@ type Column interface {
 	ScanType() reflect.Type
 }
 
+type beforeFetchColumn interface {
+	BeforeFetch()
+}
+
 func describeColumn(h api.SQLHSTMT, idx int, namebuf []uint16) (namelen int, sqltype api.SQLSMALLINT, size api.SQLULEN, decimal api.SQLSMALLINT, nullable api.SQLSMALLINT, ret api.SQLRETURN) {
 	var l api.SQLSMALLINT
 	ret = api.SQLDescribeCol(h, api.SQLUSMALLINT(idx+1),
@@ -420,6 +424,14 @@ func (c *BindableColumn) Bind(h api.SQLHSTMT, idx int) (bool, error) {
 	return true, nil
 }
 
+func (c *BindableColumn) BeforeFetch() {
+	if c.IsVariableWidth {
+		for i := range c.Buffer {
+			c.Buffer[i] = 0
+		}
+	}
+}
+
 func (c *BindableColumn) Value(h api.SQLHSTMT, idx int) (driver.Value, error) {
 	if !c.IsBound {
 		ret := c.Len.GetData(h, idx, c.CType, c.Buffer)
@@ -428,6 +440,9 @@ func (c *BindableColumn) Value(h api.SQLHSTMT, idx int) (driver.Value, error) {
 		}
 	}
 	if c.Len.IsNull() {
+		if n := nulTerminatedLen(c.Buffer, c.CType); n > 0 {
+			return c.BaseColumn.Value(c.Buffer[:n])
+		}
 		// is NULL
 		return nil, nil
 	}

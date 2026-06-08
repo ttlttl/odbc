@@ -109,6 +109,34 @@ func TestNulTerminatedLen(t *testing.T) {
 	}
 }
 
+func TestBindableColumnUsesBufferWhenNullIndicatorHasData(t *testing.T) {
+	col := NewBindableColumn(&BaseColumn{name: "name", SQLType: api.SQL_VARCHAR, Size: 8}, api.SQL_C_CHAR, 8)
+	bindable := col
+	bindable.IsBound = true
+	bindable.IsVariableWidth = true
+	copy(bindable.Buffer, []byte{'a', 'b', 'c', 0})
+	bindable.Len = BufferLen(api.SQLLEN(0xffffffff))
+
+	got, err := bindable.Value(nil, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got.([]byte)) != "abc" {
+		t.Fatalf("Value() = %#v, want abc", got)
+	}
+}
+
+func TestBindableColumnBeforeFetchClearsVariableWidthBuffer(t *testing.T) {
+	col := NewBindableColumn(&BaseColumn{name: "name", SQLType: api.SQL_VARCHAR, Size: 8}, api.SQL_C_CHAR, 8)
+	col.IsVariableWidth = true
+	copy(col.Buffer, []byte{'a', 'b', 'c', 0})
+
+	col.BeforeFetch()
+	if got := nulTerminatedLen(col.Buffer, api.SQL_C_CHAR); got != 0 {
+		t.Fatalf("nulTerminatedLen(after BeforeFetch) = %d, want 0", got)
+	}
+}
+
 func assertTypeName(t *testing.T, rows *Rows, index int, want string) {
 	t.Helper()
 	if got := rows.ColumnTypeDatabaseTypeName(index); got != want {
