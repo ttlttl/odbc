@@ -20,6 +20,7 @@ type Conn struct {
 	bad              bool
 	isMSAccessDriver bool
 	unicodeResults   bool
+	unicodeCType     api.SQLSMALLINT
 }
 
 var accessDriverSubstr = strings.ToUpper(strings.Replace("DRIVER={Microsoft Access Driver", " ", "", -1))
@@ -37,7 +38,7 @@ func (d *Driver) Open(dsn string) (driver.Conn, error) {
 	h := api.SQLHDBC(out)
 	drv.Stats.updateHandleCount(api.SQL_HANDLE_DBC, 1)
 
-	odbcDSN, unicodeResults := parseDriverOptions(dsn)
+	odbcDSN, unicodeResults, unicodeCType := parseDriverOptions(dsn)
 	b := api.StringToUTF16(odbcDSN)
 	ret = api.SQLDriverConnect(h, 0,
 		(*api.SQLWCHAR)(unsafe.Pointer(&b[0])), api.SQL_NTS,
@@ -47,13 +48,14 @@ func (d *Driver) Open(dsn string) (driver.Conn, error) {
 		return nil, NewError("SQLDriverConnect", h)
 	}
 	isAccess := strings.Contains(strings.ToUpper(strings.Replace(odbcDSN, " ", "", -1)), accessDriverSubstr)
-	return &Conn{h: h, isMSAccessDriver: isAccess, unicodeResults: unicodeResults}, nil
+	return &Conn{h: h, isMSAccessDriver: isAccess, unicodeResults: unicodeResults, unicodeCType: unicodeCType}, nil
 }
 
-func parseDriverOptions(dsn string) (string, bool) {
+func parseDriverOptions(dsn string) (string, bool, api.SQLSMALLINT) {
 	parts := strings.Split(dsn, ";")
 	kept := make([]string, 0, len(parts))
 	unicodeResults := false
+	unicodeCType := api.SQLSMALLINT(api.SQL_C_WCHAR)
 	for _, part := range parts {
 		key, value, ok := strings.Cut(part, "=")
 		if ok && strings.EqualFold(strings.TrimSpace(key), "GraphNGUnicodeResults") {
@@ -63,9 +65,18 @@ func parseDriverOptions(dsn string) (string, bool) {
 			}
 			continue
 		}
+		if ok && strings.EqualFold(strings.TrimSpace(key), "GraphNGUnicodeCType") {
+			switch strings.ToLower(strings.TrimSpace(value)) {
+			case "char", "sql_c_char":
+				unicodeCType = api.SQLSMALLINT(api.SQL_C_CHAR)
+			case "wchar", "wide", "sql_c_wchar":
+				unicodeCType = api.SQLSMALLINT(api.SQL_C_WCHAR)
+			}
+			continue
+		}
 		kept = append(kept, part)
 	}
-	return strings.Join(kept, ";"), unicodeResults
+	return strings.Join(kept, ";"), unicodeResults, unicodeCType
 }
 
 func (c *Conn) Close() (err error) {

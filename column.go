@@ -102,7 +102,7 @@ func describeColumn(h api.SQLHSTMT, idx int, namebuf []uint16) (namelen int, sql
 
 // TODO(brainman): did not check for MS SQL timestamp
 
-func NewColumn(h api.SQLHSTMT, idx int, unicodeResults bool) (Column, error) {
+func NewColumn(h api.SQLHSTMT, idx int, unicodeResults bool, unicodeCType api.SQLSMALLINT) (Column, error) {
 	namebuf := make([]uint16, 150)
 	namelen, sqltype, size, decimal, nullable, ret := describeColumn(h, idx, namebuf)
 	if ret == api.SQL_SUCCESS_WITH_INFO && namelen > len(namebuf) {
@@ -150,24 +150,24 @@ func NewColumn(h api.SQLHSTMT, idx int, unicodeResults bool) (Column, error) {
 		return NewBindableColumn(b, api.SQL_C_GUID, int(unsafe.Sizeof(v))), nil
 	case api.SQL_CHAR, api.SQL_VARCHAR:
 		if unicodeResults {
-			return NewNonBindableColumn(b, api.SQL_C_CHAR), nil
+			return NewNonBindableColumn(b, unicodeCType), nil
 		}
 		return NewVariableWidthColumn(b, api.SQL_C_CHAR, size)
 	case api.SQL_WCHAR, api.SQL_WVARCHAR:
 		if unicodeResults {
-			return NewNonBindableColumn(b, api.SQL_C_CHAR), nil
+			return NewNonBindableColumn(b, unicodeCType), nil
 		}
 		return NewVariableWidthColumn(b, api.SQL_C_WCHAR, size)
 	case api.SQL_BINARY, api.SQL_VARBINARY:
 		return NewVariableWidthColumn(b, api.SQL_C_BINARY, size)
 	case api.SQL_LONGVARCHAR:
 		if unicodeResults {
-			return NewNonBindableColumn(b, api.SQL_C_CHAR), nil
+			return NewNonBindableColumn(b, unicodeCType), nil
 		}
 		return NewVariableWidthColumn(b, api.SQL_C_CHAR, 0)
 	case api.SQL_WLONGVARCHAR, api.SQL_SS_XML:
 		if unicodeResults {
-			return NewNonBindableColumn(b, api.SQL_C_CHAR), nil
+			return NewNonBindableColumn(b, unicodeCType), nil
 		}
 		return NewVariableWidthColumn(b, api.SQL_C_WCHAR, 0)
 	case api.SQL_LONGVARBINARY:

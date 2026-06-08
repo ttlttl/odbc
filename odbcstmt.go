@@ -22,6 +22,7 @@ type ODBCStmt struct {
 	Parameters     []Parameter
 	Cols           []Column
 	unicodeResults bool
+	unicodeCType   api.SQLSMALLINT
 	// locking/lifetime
 	mu         sync.Mutex
 	usedByStmt bool
@@ -55,6 +56,7 @@ func (c *Conn) PrepareODBCStmt(query string) (*ODBCStmt, error) {
 		h:              h,
 		Parameters:     ps,
 		unicodeResults: c.unicodeResults,
+		unicodeCType:   c.unicodeCType,
 		usedByStmt:     true,
 	}, nil
 }
@@ -139,7 +141,7 @@ func (s *ODBCStmt) BindColumns() error {
 	s.Cols = make([]Column, n)
 	binding := true
 	for i := range s.Cols {
-		c, err := NewColumn(s.h, i, s.unicodeResults)
+		c, err := NewColumn(s.h, i, s.unicodeResults, s.unicodeCType)
 		if err != nil {
 			return err
 		}
