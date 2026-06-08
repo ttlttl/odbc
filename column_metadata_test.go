@@ -126,8 +126,18 @@ func TestBindableColumnUsesBufferWhenNullIndicatorHasData(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(got.([]byte)) != "abc" {
+	if got != "abc" {
 		t.Fatalf("Value() = %#v, want abc", got)
+	}
+}
+
+func TestNonBindableColumnUsesBufferWhenIndicatorIsInvalidNegative(t *testing.T) {
+	var l BufferLen = -4294967289
+	if _, ok := l.Int(); ok {
+		t.Fatalf("Int() ok = true for invalid negative indicator")
+	}
+	if got := nulTerminatedLen([]byte{'S', 'Q', 'L', 'U', 's', 'e', 'r', 0}, api.SQL_C_CHAR); got != 7 {
+		t.Fatalf("nulTerminatedLen() = %d, want 7", got)
 	}
 }
 

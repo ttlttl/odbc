@@ -150,24 +150,24 @@ func NewColumn(h api.SQLHSTMT, idx int, unicodeResults bool) (Column, error) {
 		return NewBindableColumn(b, api.SQL_C_GUID, int(unsafe.Sizeof(v))), nil
 	case api.SQL_CHAR, api.SQL_VARCHAR:
 		if unicodeResults {
-			return NewNonBindableColumn(b, api.SQL_C_WCHAR), nil
+			return NewNonBindableColumn(b, api.SQL_C_CHAR), nil
 		}
 		return NewVariableWidthColumn(b, api.SQL_C_CHAR, size)
 	case api.SQL_WCHAR, api.SQL_WVARCHAR:
 		if unicodeResults {
-			return NewNonBindableColumn(b, api.SQL_C_WCHAR), nil
+			return NewNonBindableColumn(b, api.SQL_C_CHAR), nil
 		}
 		return NewVariableWidthColumn(b, api.SQL_C_WCHAR, size)
 	case api.SQL_BINARY, api.SQL_VARBINARY:
 		return NewVariableWidthColumn(b, api.SQL_C_BINARY, size)
 	case api.SQL_LONGVARCHAR:
 		if unicodeResults {
-			return NewNonBindableColumn(b, api.SQL_C_WCHAR), nil
+			return NewNonBindableColumn(b, api.SQL_C_CHAR), nil
 		}
 		return NewVariableWidthColumn(b, api.SQL_C_CHAR, 0)
 	case api.SQL_WLONGVARCHAR, api.SQL_SS_XML:
 		if unicodeResults {
-			return NewNonBindableColumn(b, api.SQL_C_WCHAR), nil
+			return NewNonBindableColumn(b, api.SQL_C_CHAR), nil
 		}
 		return NewVariableWidthColumn(b, api.SQL_C_WCHAR, 0)
 	case api.SQL_LONGVARBINARY:
@@ -318,7 +318,7 @@ func (c *BaseColumn) Value(buf []byte) (driver.Value, error) {
 	case api.SQL_C_DOUBLE:
 		return *((*float64)(p)), nil
 	case api.SQL_C_CHAR:
-		return buf, nil
+		return string(buf), nil
 	case api.SQL_C_WCHAR:
 		if p == nil {
 			return buf, nil
@@ -499,6 +499,10 @@ loop:
 			}
 			n, ok := l.Int()
 			if !ok {
+				if n := nulTerminatedLen(b, c.CType); n > 0 {
+					total = append(total, b[:n]...)
+					break loop
+				}
 				return nil, fmt.Errorf("column #%d returned invalid data length %d", idx, l)
 			}
 			if n > len(b) {
