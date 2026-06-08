@@ -57,6 +57,24 @@ func (l *BufferLen) Bind(h api.SQLHSTMT, idx int, ctype api.SQLSMALLINT, buf []b
 		(*api.SQLLEN)(l))
 }
 
+func nulTerminatedLen(buf []byte, ctype api.SQLSMALLINT) int {
+	switch ctype {
+	case api.SQL_C_WCHAR:
+		for i := 0; i+1 < len(buf); i += 2 {
+			if buf[i] == 0 && buf[i+1] == 0 {
+				return i
+			}
+		}
+	case api.SQL_C_CHAR:
+		for i := range buf {
+			if buf[i] == 0 {
+				return i
+			}
+		}
+	}
+	return 0
+}
+
 // Column provides access to row columns.
 type Column interface {
 	Name() string
@@ -452,7 +470,10 @@ loop:
 		switch ret {
 		case api.SQL_SUCCESS:
 			if l.IsNull() {
-				// is NULL
+				if n := nulTerminatedLen(b, c.CType); n > 0 {
+					total = append(total, b[:n]...)
+					break loop
+				}
 				return nil, nil
 			}
 			n, ok := l.Int()

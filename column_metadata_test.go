@@ -96,6 +96,19 @@ func TestBufferLenRecognizesUnsigned32BitIndicators(t *testing.T) {
 	}
 }
 
+func TestNulTerminatedLen(t *testing.T) {
+	if got := nulTerminatedLen([]byte{'a', 'b', 'c', 0, 'x'}, api.SQL_C_CHAR); got != 3 {
+		t.Fatalf("nulTerminatedLen(char) = %d, want 3", got)
+	}
+	wide := []byte{'a', 0, 'b', 0, 0, 0, 'x', 0}
+	if got := nulTerminatedLen(wide, api.SQL_C_WCHAR); got != 4 {
+		t.Fatalf("nulTerminatedLen(wchar) = %d, want 4", got)
+	}
+	if got := nulTerminatedLen(make([]byte, 8), api.SQL_C_WCHAR); got != 0 {
+		t.Fatalf("nulTerminatedLen(empty wchar) = %d, want 0", got)
+	}
+}
+
 func assertTypeName(t *testing.T, rows *Rows, index int, want string) {
 	t.Helper()
 	if got := rows.ColumnTypeDatabaseTypeName(index); got != want {
