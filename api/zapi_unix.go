@@ -77,6 +77,11 @@ func SQLExecute(statementHandle SQLHSTMT) (ret SQLRETURN) {
 	return SQLRETURN(r)
 }
 
+func SQLExecDirect(statementHandle SQLHSTMT, statementText *SQLWCHAR, textLength SQLINTEGER) (ret SQLRETURN) {
+	r := C.SQLExecDirectW(C.SQLHSTMT(statementHandle), (*C.SQLWCHAR)(unsafe.Pointer(statementText)), C.SQLINTEGER(textLength))
+	return SQLRETURN(r)
+}
+
 func SQLFetch(statementHandle SQLHSTMT) (ret SQLRETURN) {
 	r := C.SQLFetch(C.SQLHSTMT(statementHandle))
 	return SQLRETURN(r)

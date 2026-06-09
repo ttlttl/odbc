@@ -30,6 +30,27 @@ type ODBCStmt struct {
 }
 
 func (c *Conn) PrepareODBCStmt(query string) (*ODBCStmt, error) {
+	os, err := c.NewODBCStmt()
+	if err != nil {
+		return nil, err
+	}
+
+	b := api.StringToUTF16(query)
+	ret := api.SQLPrepare(os.h, (*api.SQLWCHAR)(unsafe.Pointer(&b[0])), api.SQL_NTS)
+	if IsError(ret) {
+		defer os.releaseHandle()
+		return nil, c.newError("SQLPrepare", os.h)
+	}
+	ps, err := ExtractParameters(os.h)
+	if err != nil {
+		defer os.releaseHandle()
+		return nil, err
+	}
+	os.Parameters = ps
+	return os, nil
+}
+
+func (c *Conn) NewODBCStmt() (*ODBCStmt, error) {
 	var out api.SQLHANDLE
 	ret := api.SQLAllocHandle(api.SQL_HANDLE_STMT, api.SQLHANDLE(c.h), &out)
 	if IsError(ret) {
@@ -41,20 +62,8 @@ func (c *Conn) PrepareODBCStmt(query string) (*ODBCStmt, error) {
 		return nil, err
 	}
 
-	b := api.StringToUTF16(query)
-	ret = api.SQLPrepare(h, (*api.SQLWCHAR)(unsafe.Pointer(&b[0])), api.SQL_NTS)
-	if IsError(ret) {
-		defer releaseHandle(h)
-		return nil, c.newError("SQLPrepare", h)
-	}
-	ps, err := ExtractParameters(h)
-	if err != nil {
-		defer releaseHandle(h)
-		return nil, err
-	}
 	return &ODBCStmt{
 		h:              h,
-		Parameters:     ps,
 		unicodeResults: c.unicodeResults,
 		unicodeCType:   c.unicodeCType,
 		usedByStmt:     true,
@@ -123,6 +132,18 @@ func (s *ODBCStmt) Exec(args []driver.Value, conn *Conn) error {
 	}
 	if IsError(ret) {
 		return NewError("SQLExecute", s.h)
+	}
+	return nil
+}
+
+func (s *ODBCStmt) ExecDirect(query string, conn *Conn) error {
+	b := api.StringToUTF16(query)
+	ret := api.SQLExecDirect(s.h, (*api.SQLWCHAR)(unsafe.Pointer(&b[0])), api.SQL_NTS)
+	if ret == api.SQL_NO_DATA {
+		return nil
+	}
+	if IsError(ret) {
+		return conn.newError("SQLExecDirect", s.h)
 	}
 	return nil
 }

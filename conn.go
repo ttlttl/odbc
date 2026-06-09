@@ -115,16 +115,21 @@ func (c *Conn) QueryContext(ctx context.Context, query string, args []driver.Nam
 	if err != nil {
 		return nil, err
 	}
-	os, err := c.PrepareODBCStmt(query)
-	if err != nil {
-		return nil, err
-	}
-	defer os.closeByStmt()
 
 	// check if context is canceled before executing the query
 	if ctx.Err() != nil {
 		return nil, ctx.Err()
 	}
+
+	if len(dargs) == 0 {
+		return c.queryDirect(ctx, query)
+	}
+
+	os, err := c.PrepareODBCStmt(query)
+	if err != nil {
+		return nil, err
+	}
+	defer os.closeByStmt()
 
 	// execute the statement
 	rowsChan := make(chan driver.Rows)
@@ -139,6 +144,51 @@ func (c *Conn) QueryContext(ctx context.Context, query string, args []driver.Nam
 		rowsChan <- &Rows{os: os}
 	}()
 	return c.waitQuery(ctx, os, rowsChan, errorChan)
+}
+
+func (c *Conn) queryDirect(ctx context.Context, query string) (driver.Rows, error) {
+	os, err := c.NewODBCStmt()
+	if err != nil {
+		return nil, err
+	}
+	defer os.closeByStmt()
+
+	rowsChan := make(chan driver.Rows)
+	errorChan := make(chan error)
+	go func() {
+		if err := c.wrapQueryDirect(ctx, os, query); err != nil {
+			errorChan <- err
+			return
+		}
+		os.usedByRows = true
+		rowsChan <- &Rows{os: os}
+	}()
+
+	select {
+	case <-ctx.Done():
+		os.Cancel()
+		select {
+		case <-errorChan:
+			return nil, ctx.Err()
+		case rows := <-rowsChan:
+			return rows, nil
+		}
+	case err := <-errorChan:
+		return nil, err
+	case rows := <-rowsChan:
+		return rows, nil
+	}
+}
+
+func (c *Conn) wrapQueryDirect(ctx context.Context, os *ODBCStmt, query string) error {
+	if err := os.ExecDirect(query, c); err != nil {
+		return err
+	}
+
+	if err := os.BindColumns(); err != nil {
+		return err
+	}
+	return nil
 }
 
 // wrapQuery is following the same logic as `stmt.Query()` except that we don't use a lock
