@@ -54,6 +54,7 @@ type (
 //sys	SQLEndTran(handleType SQLSMALLINT, handle SQLHANDLE, completionType SQLSMALLINT) (ret SQLRETURN) = odbc32.SQLEndTran
 //sys	SQLExecute(statementHandle SQLHSTMT) (ret SQLRETURN) = odbc32.SQLExecute
 //sys	SQLExecDirect(statementHandle SQLHSTMT, statementText *SQLWCHAR, textLength SQLINTEGER) (ret SQLRETURN) = odbc32.SQLExecDirectW
+//sys	SQLExecDirectA(statementHandle SQLHSTMT, statementText *SQLCHAR, textLength SQLINTEGER) (ret SQLRETURN) = odbc32.SQLExecDirect
 //sys	SQLFetch(statementHandle SQLHSTMT) (ret SQLRETURN) = odbc32.SQLFetch
 //sys	SQLFreeHandle(handleType SQLSMALLINT, handle SQLHANDLE) (ret SQLRETURN) = odbc32.SQLFreeHandle
 //sys	SQLGetData(statementHandle SQLHSTMT, colOrParamNum SQLUSMALLINT, targetType SQLSMALLINT, targetValuePtr SQLPOINTER, bufferLength SQLLEN, vallen *SQLLEN) (ret SQLRETURN) = odbc32.SQLGetData
@@ -62,6 +63,7 @@ type (
 //sys	SQLMoreResults(statementHandle SQLHSTMT) (ret SQLRETURN) = odbc32.SQLMoreResults
 //sys	SQLNumResultCols(statementHandle SQLHSTMT, columnCountPtr *SQLSMALLINT)  (ret SQLRETURN) = odbc32.SQLNumResultCols
 //sys	SQLPrepare(statementHandle SQLHSTMT, statementText *SQLWCHAR, textLength SQLINTEGER) (ret SQLRETURN) = odbc32.SQLPrepareW
+//sys	SQLPrepareA(statementHandle SQLHSTMT, statementText *SQLCHAR, textLength SQLINTEGER) (ret SQLRETURN) = odbc32.SQLPrepare
 //sys	SQLRowCount(statementHandle SQLHSTMT, rowCountPtr *SQLLEN) (ret SQLRETURN) = odbc32.SQLRowCount
 //sys	SQLSetEnvAttr(environmentHandle SQLHENV, attribute SQLINTEGER, valuePtr SQLPOINTER, stringLength SQLINTEGER) (ret SQLRETURN) = odbc32.SQLSetEnvAttr
 //sys	SQLSetConnectAttr(connectionHandle SQLHDBC, attribute SQLINTEGER, valuePtr SQLPOINTER, stringLength SQLINTEGER) (ret SQLRETURN) = odbc32.SQLSetConnectAttrW

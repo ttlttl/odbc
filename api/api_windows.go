@@ -118,6 +118,7 @@ type (
 	SQLHWND   uintptr
 
 	SQLWCHAR     uint16
+	SQLCHAR      uint8
 	SQLSCHAR     int8
 	SQLSMALLINT  int16
 	SQLUSMALLINT uint16

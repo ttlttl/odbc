@@ -21,6 +21,7 @@ type Conn struct {
 	isMSAccessDriver bool
 	unicodeResults   bool
 	unicodeCType     api.SQLSMALLINT
+	sqlTextEncoding  string
 }
 
 var accessDriverSubstr = strings.ToUpper(strings.Replace("DRIVER={Microsoft Access Driver", " ", "", -1))
@@ -38,7 +39,7 @@ func (d *Driver) Open(dsn string) (driver.Conn, error) {
 	h := api.SQLHDBC(out)
 	drv.Stats.updateHandleCount(api.SQL_HANDLE_DBC, 1)
 
-	odbcDSN, unicodeResults, unicodeCType := parseDriverOptions(dsn)
+	odbcDSN, unicodeResults, unicodeCType, sqlTextEncoding := parseDriverOptions(dsn)
 	b := api.StringToUTF16(odbcDSN)
 	ret = api.SQLDriverConnect(h, 0,
 		(*api.SQLWCHAR)(unsafe.Pointer(&b[0])), api.SQL_NTS,
@@ -48,14 +49,15 @@ func (d *Driver) Open(dsn string) (driver.Conn, error) {
 		return nil, NewError("SQLDriverConnect", h)
 	}
 	isAccess := strings.Contains(strings.ToUpper(strings.Replace(odbcDSN, " ", "", -1)), accessDriverSubstr)
-	return &Conn{h: h, isMSAccessDriver: isAccess, unicodeResults: unicodeResults, unicodeCType: unicodeCType}, nil
+	return &Conn{h: h, isMSAccessDriver: isAccess, unicodeResults: unicodeResults, unicodeCType: unicodeCType, sqlTextEncoding: sqlTextEncoding}, nil
 }
 
-func parseDriverOptions(dsn string) (string, bool, api.SQLSMALLINT) {
+func parseDriverOptions(dsn string) (string, bool, api.SQLSMALLINT, string) {
 	parts := strings.Split(dsn, ";")
 	kept := make([]string, 0, len(parts))
 	unicodeResults := false
 	unicodeCType := api.SQLSMALLINT(api.SQL_C_WCHAR)
+	sqlTextEncoding := "wide"
 	for _, part := range parts {
 		key, value, ok := strings.Cut(part, "=")
 		if ok && strings.EqualFold(strings.TrimSpace(key), "GraphNGUnicodeResults") {
@@ -74,9 +76,18 @@ func parseDriverOptions(dsn string) (string, bool, api.SQLSMALLINT) {
 			}
 			continue
 		}
+		if ok && strings.EqualFold(strings.TrimSpace(key), "GraphNGSQLTextEncoding") {
+			switch strings.ToLower(strings.TrimSpace(value)) {
+			case "utf8", "utf-8", "char", "ansi", "narrow":
+				sqlTextEncoding = "utf8"
+			case "wide", "wchar", "unicode", "utf16", "utf-16":
+				sqlTextEncoding = "wide"
+			}
+			continue
+		}
 		kept = append(kept, part)
 	}
-	return strings.Join(kept, ";"), unicodeResults, unicodeCType
+	return strings.Join(kept, ";"), unicodeResults, unicodeCType, sqlTextEncoding
 }
 
 func (c *Conn) Close() (err error) {

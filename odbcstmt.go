@@ -18,11 +18,12 @@ import (
 // TODO(brainman): see if I could use SQLExecDirect anywhere
 
 type ODBCStmt struct {
-	h              api.SQLHSTMT
-	Parameters     []Parameter
-	Cols           []Column
-	unicodeResults bool
-	unicodeCType   api.SQLSMALLINT
+	h               api.SQLHSTMT
+	Parameters      []Parameter
+	Cols            []Column
+	unicodeResults  bool
+	unicodeCType    api.SQLSMALLINT
+	sqlTextEncoding string
 	// locking/lifetime
 	mu         sync.Mutex
 	usedByStmt bool
@@ -35,8 +36,7 @@ func (c *Conn) PrepareODBCStmt(query string) (*ODBCStmt, error) {
 		return nil, err
 	}
 
-	b := api.StringToUTF16(query)
-	ret := api.SQLPrepare(os.h, (*api.SQLWCHAR)(unsafe.Pointer(&b[0])), api.SQL_NTS)
+	ret := os.prepare(query)
 	if IsError(ret) {
 		defer os.releaseHandle()
 		return nil, c.newError("SQLPrepare", os.h)
@@ -63,10 +63,11 @@ func (c *Conn) NewODBCStmt() (*ODBCStmt, error) {
 	}
 
 	return &ODBCStmt{
-		h:              h,
-		unicodeResults: c.unicodeResults,
-		unicodeCType:   c.unicodeCType,
-		usedByStmt:     true,
+		h:               h,
+		unicodeResults:  c.unicodeResults,
+		unicodeCType:    c.unicodeCType,
+		sqlTextEncoding: c.sqlTextEncoding,
+		usedByStmt:      true,
 	}, nil
 }
 
@@ -137,8 +138,7 @@ func (s *ODBCStmt) Exec(args []driver.Value, conn *Conn) error {
 }
 
 func (s *ODBCStmt) ExecDirect(query string, conn *Conn) error {
-	b := api.StringToUTF16(query)
-	ret := api.SQLExecDirect(s.h, (*api.SQLWCHAR)(unsafe.Pointer(&b[0])), api.SQL_NTS)
+	ret := s.execDirect(query)
 	if ret == api.SQL_NO_DATA {
 		return nil
 	}
@@ -146,6 +146,28 @@ func (s *ODBCStmt) ExecDirect(query string, conn *Conn) error {
 		return conn.newError("SQLExecDirect", s.h)
 	}
 	return nil
+}
+
+func (s *ODBCStmt) prepare(query string) api.SQLRETURN {
+	if s.useNarrowSQLText() {
+		b := append([]byte(query), 0)
+		return api.SQLPrepareA(s.h, (*api.SQLCHAR)(unsafe.Pointer(&b[0])), api.SQL_NTS)
+	}
+	b := api.StringToUTF16(query)
+	return api.SQLPrepare(s.h, (*api.SQLWCHAR)(unsafe.Pointer(&b[0])), api.SQL_NTS)
+}
+
+func (s *ODBCStmt) execDirect(query string) api.SQLRETURN {
+	if s.useNarrowSQLText() {
+		b := append([]byte(query), 0)
+		return api.SQLExecDirectA(s.h, (*api.SQLCHAR)(unsafe.Pointer(&b[0])), api.SQL_NTS)
+	}
+	b := api.StringToUTF16(query)
+	return api.SQLExecDirect(s.h, (*api.SQLWCHAR)(unsafe.Pointer(&b[0])), api.SQL_NTS)
+}
+
+func (s *ODBCStmt) useNarrowSQLText() bool {
+	return s.sqlTextEncoding == "utf8"
 }
 
 func (s *ODBCStmt) BindColumns() error {

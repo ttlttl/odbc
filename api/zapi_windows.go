@@ -51,6 +51,7 @@ var (
 	procSQLEndTran         = mododbc32.NewProc("SQLEndTran")
 	procSQLExecute         = mododbc32.NewProc("SQLExecute")
 	procSQLExecDirectW     = mododbc32.NewProc("SQLExecDirectW")
+	procSQLExecDirect      = mododbc32.NewProc("SQLExecDirect")
 	procSQLFetch           = mododbc32.NewProc("SQLFetch")
 	procSQLFreeHandle      = mododbc32.NewProc("SQLFreeHandle")
 	procSQLGetData         = mododbc32.NewProc("SQLGetData")
@@ -59,6 +60,7 @@ var (
 	procSQLMoreResults     = mododbc32.NewProc("SQLMoreResults")
 	procSQLNumResultCols   = mododbc32.NewProc("SQLNumResultCols")
 	procSQLPrepareW        = mododbc32.NewProc("SQLPrepareW")
+	procSQLPrepare         = mododbc32.NewProc("SQLPrepare")
 	procSQLRowCount        = mododbc32.NewProc("SQLRowCount")
 	procSQLSetEnvAttr      = mododbc32.NewProc("SQLSetEnvAttr")
 	procSQLSetConnectAttrW = mododbc32.NewProc("SQLSetConnectAttrW")
@@ -136,6 +138,12 @@ func SQLExecDirect(statementHandle SQLHSTMT, statementText *SQLWCHAR, textLength
 	return
 }
 
+func SQLExecDirectA(statementHandle SQLHSTMT, statementText *SQLCHAR, textLength SQLINTEGER) (ret SQLRETURN) {
+	r0, _, _ := syscall.Syscall(procSQLExecDirect.Addr(), 3, uintptr(statementHandle), uintptr(unsafe.Pointer(statementText)), uintptr(textLength))
+	ret = SQLRETURN(r0)
+	return
+}
+
 func SQLFetch(statementHandle SQLHSTMT) (ret SQLRETURN) {
 	r0, _, _ := syscall.Syscall(procSQLFetch.Addr(), 1, uintptr(statementHandle), 0, 0)
 	ret = SQLRETURN(r0)
@@ -180,6 +188,12 @@ func SQLNumResultCols(statementHandle SQLHSTMT, columnCountPtr *SQLSMALLINT) (re
 
 func SQLPrepare(statementHandle SQLHSTMT, statementText *SQLWCHAR, textLength SQLINTEGER) (ret SQLRETURN) {
 	r0, _, _ := syscall.Syscall(procSQLPrepareW.Addr(), 3, uintptr(statementHandle), uintptr(unsafe.Pointer(statementText)), uintptr(textLength))
+	ret = SQLRETURN(r0)
+	return
+}
+
+func SQLPrepareA(statementHandle SQLHSTMT, statementText *SQLCHAR, textLength SQLINTEGER) (ret SQLRETURN) {
+	r0, _, _ := syscall.Syscall(procSQLPrepare.Addr(), 3, uintptr(statementHandle), uintptr(unsafe.Pointer(statementText)), uintptr(textLength))
 	ret = SQLRETURN(r0)
 	return
 }

@@ -82,6 +82,11 @@ func SQLExecDirect(statementHandle SQLHSTMT, statementText *SQLWCHAR, textLength
 	return SQLRETURN(r)
 }
 
+func SQLExecDirectA(statementHandle SQLHSTMT, statementText *SQLCHAR, textLength SQLINTEGER) (ret SQLRETURN) {
+	r := C.SQLExecDirect(C.SQLHSTMT(statementHandle), (*C.SQLCHAR)(unsafe.Pointer(statementText)), C.SQLINTEGER(textLength))
+	return SQLRETURN(r)
+}
+
 func SQLFetch(statementHandle SQLHSTMT) (ret SQLRETURN) {
 	r := C.SQLFetch(C.SQLHSTMT(statementHandle))
 	return SQLRETURN(r)
@@ -119,6 +124,11 @@ func SQLNumResultCols(statementHandle SQLHSTMT, columnCountPtr *SQLSMALLINT) (re
 
 func SQLPrepare(statementHandle SQLHSTMT, statementText *SQLWCHAR, textLength SQLINTEGER) (ret SQLRETURN) {
 	r := C.SQLPrepareW(C.SQLHSTMT(statementHandle), (*C.SQLWCHAR)(unsafe.Pointer(statementText)), C.SQLINTEGER(textLength))
+	return SQLRETURN(r)
+}
+
+func SQLPrepareA(statementHandle SQLHSTMT, statementText *SQLCHAR, textLength SQLINTEGER) (ret SQLRETURN) {
+	r := C.SQLPrepare(C.SQLHSTMT(statementHandle), (*C.SQLCHAR)(unsafe.Pointer(statementText)), C.SQLINTEGER(textLength))
 	return SQLRETURN(r)
 }
 
