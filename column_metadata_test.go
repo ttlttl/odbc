@@ -141,6 +141,45 @@ func TestNonBindableColumnUsesBufferWhenIndicatorIsInvalidNegative(t *testing.T)
 	}
 }
 
+func TestGetDataWarningIsNonFatal(t *testing.T) {
+	tests := []struct {
+		name          string
+		states        []string
+		wantTruncated bool
+		wantOK        bool
+	}{
+		{name: "empty", wantOK: true},
+		{name: "string truncated", states: []string{"01004"}, wantTruncated: true, wantOK: true},
+		{name: "fractional truncation", states: []string{"01S07"}, wantOK: true},
+		{name: "mixed nonfatal", states: []string{"01S07", "01004"}, wantTruncated: true, wantOK: true},
+		{name: "fatal", states: []string{"22001"}, wantOK: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := &Error{APIName: "SQLGetData"}
+			for _, state := range tt.states {
+				err.Diag = append(err.Diag, DiagRecord{State: state})
+			}
+			gotTruncated, gotOK := getDataWarningIsNonFatal(err)
+			if gotTruncated != tt.wantTruncated || gotOK != tt.wantOK {
+				t.Fatalf("getDataWarningIsNonFatal() = (%v, %v), want (%v, %v)", gotTruncated, gotOK, tt.wantTruncated, tt.wantOK)
+			}
+		})
+	}
+}
+
+func TestGetDataLengthExceedsBuffer(t *testing.T) {
+	if !getDataLengthExceedsBuffer(BufferLen(2048), make([]byte, 1024)) {
+		t.Fatal("getDataLengthExceedsBuffer() = false, want true")
+	}
+	if getDataLengthExceedsBuffer(BufferLen(1024), make([]byte, 1024)) {
+		t.Fatal("getDataLengthExceedsBuffer() = true for exact buffer")
+	}
+	if getDataLengthExceedsBuffer(BufferLen(api.SQL_NULL_DATA), make([]byte, 1024)) {
+		t.Fatal("getDataLengthExceedsBuffer() = true for SQL_NULL_DATA")
+	}
+}
+
 func TestBindableColumnBeforeFetchClearsVariableWidthBuffer(t *testing.T) {
 	col := NewBindableColumn(&BaseColumn{name: "name", SQLType: api.SQL_VARCHAR, Size: 8}, api.SQL_C_CHAR, 8)
 	col.IsVariableWidth = true

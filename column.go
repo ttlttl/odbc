@@ -490,67 +490,113 @@ loop:
 		ret := l.GetData(h, idx, c.CType, b)
 		switch ret {
 		case api.SQL_SUCCESS:
-			if l.IsNull() {
-				if n := nulTerminatedLen(b, c.CType); n > 0 {
-					total = append(total, b[:n]...)
-					break loop
-				}
-				return nil, nil
+			done, err := c.appendGetDataResult(idx, &total, b, l, false)
+			if err != nil {
+				return nil, err
 			}
-			n, ok := l.Int()
-			if !ok {
-				if n := nulTerminatedLen(b, c.CType); n > 0 {
-					total = append(total, b[:n]...)
-					break loop
-				}
-				return nil, fmt.Errorf("column #%d returned invalid data length %d", idx, l)
+			if done {
+				break loop
 			}
-			if n > len(b) {
-				return nil, fmt.Errorf("too much data returned: %d bytes returned, but buffer size is %d", l, cap(b))
-			}
-			total = append(total, b[:n]...)
-			break loop
 		case api.SQL_SUCCESS_WITH_INFO:
-			if l.IsNull() {
-				return nil, nil
+			diagErr := NewError("SQLGetData", h).(*Error)
+			truncated, ok := getDataWarningIsNonFatal(diagErr)
+			if !ok {
+				return nil, diagErr
 			}
-			err := NewError("SQLGetData", h).(*Error)
-			if len(err.Diag) > 0 {
-				truncated := false
-				for _, diag := range err.Diag {
-					if diag.State == "01004" {
-						truncated = true
-						break
-					}
-				}
-				if !truncated {
-					return nil, err
-				}
+			if !truncated && getDataLengthExceedsBuffer(l, b) {
+				truncated = true
 			}
-			i := len(b)
-			switch c.CType {
-			case api.SQL_C_WCHAR:
-				i -= 2 // remove wchar (2 bytes) null-termination character
-			case api.SQL_C_CHAR:
-				i-- // remove null-termination character
+			done, err := c.appendGetDataResult(idx, &total, b, l, truncated)
+			if err != nil {
+				return nil, err
 			}
-			total = append(total, b[:i]...)
+			if done {
+				break loop
+			}
 			if !l.IsNoTotal() {
-				// odbc gives us a hint about remaining data,
-				// lets get it in one go.
-				n, ok := l.Int() // total bytes for our data
-				if !ok {
-					return nil, fmt.Errorf("column #%d returned invalid data length %d", idx, l)
-				}
-				n -= i // subtract already received
-				n += 2 // room for biggest (wchar) null-terminator
-				if len(b) < n {
-					b = make([]byte, n)
-				}
+				b = growGetDataBuffer(b, len(total), l, c.CType)
 			}
 		default:
 			return nil, NewError("SQLGetData", h)
 		}
 	}
 	return c.BaseColumn.Value(total)
+}
+
+func (c *NonBindableColumn) appendGetDataResult(idx int, total *[]byte, b []byte, l BufferLen, truncated bool) (bool, error) {
+	if l.IsNull() {
+		if n := nulTerminatedLen(b, c.CType); n > 0 {
+			*total = append(*total, b[:n]...)
+			return true, nil
+		}
+		return true, nil
+	}
+	if truncated {
+		n := len(b) - nulTerminatorSize(c.CType)
+		if n < 0 {
+			n = 0
+		}
+		*total = append(*total, b[:n]...)
+		return false, nil
+	}
+	n, ok := l.Int()
+	if !ok {
+		if n := nulTerminatedLen(b, c.CType); n > 0 {
+			*total = append(*total, b[:n]...)
+			return true, nil
+		}
+		return false, fmt.Errorf("column #%d returned invalid data length %d", idx, l)
+	}
+	if n > len(b) {
+		return false, fmt.Errorf("too much data returned: %d bytes returned, but buffer size is %d", l, cap(b))
+	}
+	*total = append(*total, b[:n]...)
+	return true, nil
+}
+
+func getDataWarningIsNonFatal(err *Error) (truncated bool, ok bool) {
+	if len(err.Diag) == 0 {
+		return false, true
+	}
+	for _, diag := range err.Diag {
+		switch diag.State {
+		case "01004":
+			truncated = true
+		case "01S07":
+			// Cache Unicode ODBC can report fractional truncation while returning
+			// character data through SQLGetData. The returned bytes are still usable.
+		default:
+			return false, false
+		}
+	}
+	return truncated, true
+}
+
+func growGetDataBuffer(b []byte, alreadyRead int, l BufferLen, ctype api.SQLSMALLINT) []byte {
+	n, ok := l.Int()
+	if !ok {
+		return b
+	}
+	n -= alreadyRead
+	n += nulTerminatorSize(ctype)
+	if len(b) < n {
+		return make([]byte, n)
+	}
+	return b
+}
+
+func getDataLengthExceedsBuffer(l BufferLen, b []byte) bool {
+	n, ok := l.Int()
+	return ok && n > len(b)
+}
+
+func nulTerminatorSize(ctype api.SQLSMALLINT) int {
+	switch ctype {
+	case api.SQL_C_WCHAR:
+		return 2
+	case api.SQL_C_CHAR:
+		return 1
+	default:
+		return 0
+	}
 }
