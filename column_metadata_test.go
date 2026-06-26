@@ -141,6 +141,36 @@ func TestNonBindableColumnUsesBufferWhenIndicatorIsInvalidNegative(t *testing.T)
 	}
 }
 
+func TestNonBindableColumnAppendNullIndicatorReturnsNull(t *testing.T) {
+	col := NewNonBindableColumn(&BaseColumn{name: "name", SQLType: api.SQL_VARCHAR}, api.SQL_C_CHAR)
+	var total []byte
+	done, isNull, err := col.appendGetDataResult(0, &total, make([]byte, 8), BufferLen(api.SQL_NULL_DATA), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !done || !isNull {
+		t.Fatalf("appendGetDataResult() = done %v null %v, want true true", done, isNull)
+	}
+	if total != nil {
+		t.Fatalf("total = %#v, want nil", total)
+	}
+}
+
+func TestNonBindableColumnAppendInvalidNegativeIndicatorUsesBuffer(t *testing.T) {
+	col := NewNonBindableColumn(&BaseColumn{name: "name", SQLType: api.SQL_VARCHAR}, api.SQL_C_CHAR)
+	var total []byte
+	done, isNull, err := col.appendGetDataResult(0, &total, []byte{'a', 'b', 'c', 0}, BufferLen(-4294967289), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !done || isNull {
+		t.Fatalf("appendGetDataResult() = done %v null %v, want true false", done, isNull)
+	}
+	if string(total) != "abc" {
+		t.Fatalf("total = %q, want abc", string(total))
+	}
+}
+
 func TestGetDataWarningIsNonFatal(t *testing.T) {
 	tests := []struct {
 		name          string

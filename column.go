@@ -484,15 +484,19 @@ func (c *NonBindableColumn) Bind(h api.SQLHSTMT, idx int) (bool, error) {
 func (c *NonBindableColumn) Value(h api.SQLHSTMT, idx int) (driver.Value, error) {
 	var l BufferLen
 	var total []byte
+	var isNull bool
 	b := make([]byte, 1024)
 loop:
 	for {
 		ret := l.GetData(h, idx, c.CType, b)
 		switch ret {
 		case api.SQL_SUCCESS:
-			done, err := c.appendGetDataResult(idx, &total, b, l, false)
+			done, null, err := c.appendGetDataResult(idx, &total, b, l, false)
 			if err != nil {
 				return nil, err
+			}
+			if null {
+				isNull = true
 			}
 			if done {
 				break loop
@@ -506,9 +510,12 @@ loop:
 			if !truncated && getDataLengthExceedsBuffer(l, b) {
 				truncated = true
 			}
-			done, err := c.appendGetDataResult(idx, &total, b, l, truncated)
+			done, null, err := c.appendGetDataResult(idx, &total, b, l, truncated)
 			if err != nil {
 				return nil, err
+			}
+			if null {
+				isNull = true
 			}
 			if done {
 				break loop
@@ -520,16 +527,19 @@ loop:
 			return nil, NewError("SQLGetData", h)
 		}
 	}
+	if isNull {
+		return nil, nil
+	}
 	return c.BaseColumn.Value(total)
 }
 
-func (c *NonBindableColumn) appendGetDataResult(idx int, total *[]byte, b []byte, l BufferLen, truncated bool) (bool, error) {
+func (c *NonBindableColumn) appendGetDataResult(idx int, total *[]byte, b []byte, l BufferLen, truncated bool) (bool, bool, error) {
 	if l.IsNull() {
 		if n := nulTerminatedLen(b, c.CType); n > 0 {
 			*total = append(*total, b[:n]...)
-			return true, nil
+			return true, false, nil
 		}
-		return true, nil
+		return true, true, nil
 	}
 	if truncated {
 		n := len(b) - nulTerminatorSize(c.CType)
@@ -537,21 +547,21 @@ func (c *NonBindableColumn) appendGetDataResult(idx int, total *[]byte, b []byte
 			n = 0
 		}
 		*total = append(*total, b[:n]...)
-		return false, nil
+		return false, false, nil
 	}
 	n, ok := l.Int()
 	if !ok {
 		if n := nulTerminatedLen(b, c.CType); n > 0 {
 			*total = append(*total, b[:n]...)
-			return true, nil
+			return true, false, nil
 		}
-		return false, fmt.Errorf("column #%d returned invalid data length %d", idx, l)
+		return false, false, fmt.Errorf("column #%d returned invalid data length %d", idx, l)
 	}
 	if n > len(b) {
-		return false, fmt.Errorf("too much data returned: %d bytes returned, but buffer size is %d", l, cap(b))
+		return false, false, fmt.Errorf("too much data returned: %d bytes returned, but buffer size is %d", l, cap(b))
 	}
 	*total = append(*total, b[:n]...)
-	return true, nil
+	return true, false, nil
 }
 
 func getDataWarningIsNonFatal(err *Error) (truncated bool, ok bool) {
