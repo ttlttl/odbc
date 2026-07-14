@@ -22,6 +22,7 @@ type Conn struct {
 	unicodeResults   bool
 	unicodeCType     api.SQLSMALLINT
 	sqlTextEncoding  string
+	columnBinding    bool
 }
 
 var accessDriverSubstr = strings.ToUpper(strings.Replace("DRIVER={Microsoft Access Driver", " ", "", -1))
@@ -39,7 +40,7 @@ func (d *Driver) Open(dsn string) (driver.Conn, error) {
 	h := api.SQLHDBC(out)
 	drv.Stats.updateHandleCount(api.SQL_HANDLE_DBC, 1)
 
-	odbcDSN, unicodeResults, unicodeCType, sqlTextEncoding := parseDriverOptions(dsn)
+	odbcDSN, unicodeResults, unicodeCType, sqlTextEncoding, columnBinding := parseDriverOptions(dsn)
 	b := api.StringToUTF16(odbcDSN)
 	ret = api.SQLDriverConnect(h, 0,
 		(*api.SQLWCHAR)(unsafe.Pointer(&b[0])), api.SQL_NTS,
@@ -49,15 +50,24 @@ func (d *Driver) Open(dsn string) (driver.Conn, error) {
 		return nil, NewError("SQLDriverConnect", h)
 	}
 	isAccess := strings.Contains(strings.ToUpper(strings.Replace(odbcDSN, " ", "", -1)), accessDriverSubstr)
-	return &Conn{h: h, isMSAccessDriver: isAccess, unicodeResults: unicodeResults, unicodeCType: unicodeCType, sqlTextEncoding: sqlTextEncoding}, nil
+	return &Conn{
+		h:                h,
+		isMSAccessDriver: isAccess,
+		unicodeResults:   unicodeResults,
+		unicodeCType:     unicodeCType,
+		sqlTextEncoding:  sqlTextEncoding,
+		columnBinding:    columnBinding,
+	}, nil
 }
 
-func parseDriverOptions(dsn string) (string, bool, api.SQLSMALLINT, string) {
+func parseDriverOptions(dsn string) (string, bool, api.SQLSMALLINT, string, bool) {
 	parts := strings.Split(dsn, ";")
 	kept := make([]string, 0, len(parts))
 	unicodeResults := false
 	unicodeCType := api.SQLSMALLINT(api.SQL_C_WCHAR)
 	sqlTextEncoding := "wide"
+	columnBinding := true
+	columnBindingConfigured := false
 	for _, part := range parts {
 		key, value, ok := strings.Cut(part, "=")
 		if ok && strings.EqualFold(strings.TrimSpace(key), "GraphNGUnicodeResults") {
@@ -85,9 +95,25 @@ func parseDriverOptions(dsn string) (string, bool, api.SQLSMALLINT, string) {
 			}
 			continue
 		}
+		if ok && strings.EqualFold(strings.TrimSpace(key), "GraphNGColumnBinding") {
+			switch strings.ToLower(strings.TrimSpace(value)) {
+			case "1", "true", "yes", "on", "enabled":
+				columnBinding = true
+				columnBindingConfigured = true
+			case "0", "false", "no", "off", "disabled":
+				columnBinding = false
+				columnBindingConfigured = true
+			}
+			continue
+		}
 		kept = append(kept, part)
 	}
-	return strings.Join(kept, ";"), unicodeResults, unicodeCType, sqlTextEncoding
+	if unicodeResults && !columnBindingConfigured {
+		// SQLBindCol lets the native driver retain Go buffer pointers between
+		// cgo calls. GraphNG's Cache/IRIS path uses SQLGetData instead.
+		columnBinding = false
+	}
+	return strings.Join(kept, ";"), unicodeResults, unicodeCType, sqlTextEncoding, columnBinding
 }
 
 func (c *Conn) Close() (err error) {

@@ -24,6 +24,7 @@ type ODBCStmt struct {
 	unicodeResults  bool
 	unicodeCType    api.SQLSMALLINT
 	sqlTextEncoding string
+	columnBinding   bool
 	// locking/lifetime
 	mu         sync.Mutex
 	usedByStmt bool
@@ -67,6 +68,7 @@ func (c *Conn) NewODBCStmt() (*ODBCStmt, error) {
 		unicodeResults:  c.unicodeResults,
 		unicodeCType:    c.unicodeCType,
 		sqlTextEncoding: c.sqlTextEncoding,
+		columnBinding:   c.columnBinding,
 		usedByStmt:      true,
 	}, nil
 }
@@ -182,13 +184,13 @@ func (s *ODBCStmt) BindColumns() error {
 	}
 	// fetch column descriptions
 	s.Cols = make([]Column, n)
-	binding := true
+	binding := s.columnBinding
 	for i := range s.Cols {
 		c, err := NewColumn(s.h, i, s.unicodeResults, s.unicodeCType)
 		if err != nil {
 			return err
 		}
-		s.Cols[i] = c
+		s.Cols[i] = columnForBindingMode(c, s.columnBinding)
 		// Once we found one non-bindable column, we will not bind the rest.
 		// http://www.easysoft.com/developer/languages/c/odbc-tutorial-fetching-results.html
 		// ... One common restriction is that SQLGetData may only be called on columns after the last bound column. ...
@@ -204,6 +206,16 @@ func (s *ODBCStmt) BindColumns() error {
 		}
 	}
 	return nil
+}
+
+func columnForBindingMode(column Column, enabled bool) Column {
+	if enabled {
+		return column
+	}
+	if bindable, ok := column.(*BindableColumn); ok && bindable.IsVariableWidth {
+		return NewNonBindableColumn(bindable.BaseColumn, bindable.CType)
+	}
+	return column
 }
 
 func (s *ODBCStmt) Cancel() error {

@@ -7,7 +7,7 @@ import (
 )
 
 func TestParseDriverOptionsRemovesUnicodeResults(t *testing.T) {
-	dsn, unicodeResults, unicodeCType, sqlTextEncoding := parseDriverOptions("Driver=Iris;Host=127.0.0.1;GraphNGUnicodeResults=true;UID=_system")
+	dsn, unicodeResults, unicodeCType, sqlTextEncoding, columnBinding := parseDriverOptions("Driver=Iris;Host=127.0.0.1;GraphNGUnicodeResults=true;UID=_system")
 	if !unicodeResults {
 		t.Fatal("unicodeResults = false, want true")
 	}
@@ -17,13 +17,16 @@ func TestParseDriverOptionsRemovesUnicodeResults(t *testing.T) {
 	if sqlTextEncoding != "wide" {
 		t.Fatalf("sqlTextEncoding = %q, want wide", sqlTextEncoding)
 	}
+	if columnBinding {
+		t.Fatal("columnBinding = true, want false for GraphNG unicode results")
+	}
 	if dsn != "Driver=Iris;Host=127.0.0.1;UID=_system" {
 		t.Fatalf("dsn = %q", dsn)
 	}
 }
 
 func TestParseDriverOptionsDefaultsUnicodeResultsOff(t *testing.T) {
-	dsn, unicodeResults, unicodeCType, sqlTextEncoding := parseDriverOptions("Driver=Iris;Host=127.0.0.1")
+	dsn, unicodeResults, unicodeCType, sqlTextEncoding, columnBinding := parseDriverOptions("Driver=Iris;Host=127.0.0.1")
 	if unicodeResults {
 		t.Fatal("unicodeResults = true, want false")
 	}
@@ -33,13 +36,16 @@ func TestParseDriverOptionsDefaultsUnicodeResultsOff(t *testing.T) {
 	if sqlTextEncoding != "wide" {
 		t.Fatalf("sqlTextEncoding = %q, want wide", sqlTextEncoding)
 	}
+	if !columnBinding {
+		t.Fatal("columnBinding = false, want true without GraphNG unicode results")
+	}
 	if dsn != "Driver=Iris;Host=127.0.0.1" {
 		t.Fatalf("dsn = %q", dsn)
 	}
 }
 
 func TestParseDriverOptionsReadsUnicodeCType(t *testing.T) {
-	dsn, unicodeResults, unicodeCType, sqlTextEncoding := parseDriverOptions("Driver=Cacheu35;GraphNGUnicodeResults=true;GraphNGUnicodeCType=char;UID=_system")
+	dsn, unicodeResults, unicodeCType, sqlTextEncoding, columnBinding := parseDriverOptions("Driver=Cacheu35;GraphNGUnicodeResults=true;GraphNGUnicodeCType=char;UID=_system")
 	if !unicodeResults {
 		t.Fatal("unicodeResults = false, want true")
 	}
@@ -49,17 +55,38 @@ func TestParseDriverOptionsReadsUnicodeCType(t *testing.T) {
 	if sqlTextEncoding != "wide" {
 		t.Fatalf("sqlTextEncoding = %q, want wide", sqlTextEncoding)
 	}
+	if columnBinding {
+		t.Fatal("columnBinding = true, want false for Cache unicode results")
+	}
 	if dsn != "Driver=Cacheu35;UID=_system" {
 		t.Fatalf("dsn = %q", dsn)
 	}
 }
 
 func TestParseDriverOptionsReadsSQLTextEncoding(t *testing.T) {
-	dsn, _, _, sqlTextEncoding := parseDriverOptions("Driver=Iris;GraphNGSQLTextEncoding=utf8;UID=_system")
+	dsn, _, _, sqlTextEncoding, _ := parseDriverOptions("Driver=Iris;GraphNGSQLTextEncoding=utf8;UID=_system")
 	if sqlTextEncoding != "utf8" {
 		t.Fatalf("sqlTextEncoding = %q, want utf8", sqlTextEncoding)
 	}
 	if dsn != "Driver=Iris;UID=_system" {
 		t.Fatalf("dsn = %q", dsn)
+	}
+}
+
+func TestParseDriverOptionsReadsColumnBindingOverride(t *testing.T) {
+	dsn, unicodeResults, _, _, columnBinding := parseDriverOptions("Driver=Cacheu35;GraphNGUnicodeResults=true;GraphNGColumnBinding=enabled;UID=_system")
+	if !unicodeResults {
+		t.Fatal("unicodeResults = false, want true")
+	}
+	if !columnBinding {
+		t.Fatal("columnBinding = false, want explicit override true")
+	}
+	if dsn != "Driver=Cacheu35;UID=_system" {
+		t.Fatalf("dsn = %q", dsn)
+	}
+
+	_, _, _, _, columnBinding = parseDriverOptions("Driver=Cacheu35;GraphNGColumnBinding=disabled;UID=_system")
+	if columnBinding {
+		t.Fatal("columnBinding = true, want explicit override false")
 	}
 }

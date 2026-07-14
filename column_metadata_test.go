@@ -75,6 +75,33 @@ func TestTextColumnUsesGetDataForUnicodeResults(t *testing.T) {
 	}
 }
 
+func TestColumnBindingModeUsesUnboundFixedColumn(t *testing.T) {
+	base := &BaseColumn{name: "id", SQLType: api.SQL_BIGINT, NullableCode: 0}
+	bound := NewBindableColumn(base, api.SQL_C_SBIGINT, 8)
+
+	if got := columnForBindingMode(bound, false); got != bound {
+		t.Fatal("fixed columns should retain their small SQLGetData buffer")
+	}
+	if got := columnForBindingMode(bound, true); got != bound {
+		t.Fatal("enabled column binding should preserve the original column")
+	}
+}
+
+func TestColumnBindingModeConvertsVariableColumnsToGetData(t *testing.T) {
+	base := &BaseColumn{name: "value", SQLType: api.SQL_VARCHAR, NullableCode: 0}
+	bound := NewBindableColumn(base, api.SQL_C_CHAR, 1024)
+	bound.IsVariableWidth = true
+
+	got := columnForBindingMode(bound, false)
+	unbound, ok := got.(*NonBindableColumn)
+	if !ok {
+		t.Fatalf("columnForBindingMode returned %T, want *NonBindableColumn", got)
+	}
+	if unbound.BaseColumn != base || unbound.CType != api.SQL_C_CHAR {
+		t.Fatalf("converted column lost metadata: %#v", unbound.BaseColumn)
+	}
+}
+
 func TestBufferLenRecognizesUnsigned32BitIndicators(t *testing.T) {
 	nullLen := BufferLen(api.SQLLEN(0xffffffff))
 	if !nullLen.IsNull() {
