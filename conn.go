@@ -8,7 +8,10 @@ import (
 	"context"
 	"database/sql/driver"
 	"errors"
+	"runtime"
+	"strconv"
 	"strings"
+	"sync"
 	"unsafe"
 
 	"github.com/alexbrainman/odbc/api"
@@ -23,13 +26,24 @@ type Conn struct {
 	unicodeCType     api.SQLSMALLINT
 	sqlTextEncoding  string
 	columnBinding    bool
+	serializedLife   bool
 }
 
 var accessDriverSubstr = strings.ToUpper(strings.Replace("DRIVER={Microsoft Access Driver", " ", "", -1))
+var connectMu sync.Mutex
 
 func (d *Driver) Open(dsn string) (driver.Conn, error) {
 	if d.initErr != nil {
 		return nil, d.initErr
+	}
+
+	// Some legacy ODBC drivers mutate process-global state while connecting.
+	// Serialize GraphNG connection lifecycle calls without changing behavior
+	// for other consumers of this driver.
+	serializedLife := strings.Contains(strings.ToLower(dsn), "graphng")
+	if serializedLife {
+		connectMu.Lock()
+		defer connectMu.Unlock()
 	}
 
 	var out api.SQLHANDLE
@@ -40,11 +54,19 @@ func (d *Driver) Open(dsn string) (driver.Conn, error) {
 	h := api.SQLHDBC(out)
 	drv.Stats.updateHandleCount(api.SQL_HANDLE_DBC, 1)
 
-	odbcDSN, unicodeResults, unicodeCType, sqlTextEncoding, columnBinding := parseDriverOptions(dsn)
+	odbcDSN, unicodeResults, unicodeCType, sqlTextEncoding, columnBinding, connectTimeout := parseDriverOptions(dsn)
+	if connectTimeout > 0 {
+		ret = api.SQLSetConnectUIntPtrAttr(h, api.SQL_ATTR_LOGIN_TIMEOUT, uintptr(connectTimeout), 0)
+		if IsError(ret) {
+			defer releaseHandle(h)
+			return nil, NewError("SQLSetConnectAttr(SQL_ATTR_LOGIN_TIMEOUT)", h)
+		}
+	}
 	b := api.StringToUTF16(odbcDSN)
 	ret = api.SQLDriverConnect(h, 0,
 		(*api.SQLWCHAR)(unsafe.Pointer(&b[0])), api.SQL_NTS,
 		nil, 0, nil, api.SQL_DRIVER_NOPROMPT)
+	runtime.KeepAlive(b)
 	if IsError(ret) {
 		defer releaseHandle(h)
 		return nil, NewError("SQLDriverConnect", h)
@@ -57,10 +79,11 @@ func (d *Driver) Open(dsn string) (driver.Conn, error) {
 		unicodeCType:     unicodeCType,
 		sqlTextEncoding:  sqlTextEncoding,
 		columnBinding:    columnBinding,
+		serializedLife:   serializedLife,
 	}, nil
 }
 
-func parseDriverOptions(dsn string) (string, bool, api.SQLSMALLINT, string, bool) {
+func parseDriverOptions(dsn string) (string, bool, api.SQLSMALLINT, string, bool, uint64) {
 	parts := strings.Split(dsn, ";")
 	kept := make([]string, 0, len(parts))
 	unicodeResults := false
@@ -68,9 +91,13 @@ func parseDriverOptions(dsn string) (string, bool, api.SQLSMALLINT, string, bool
 	sqlTextEncoding := "wide"
 	columnBinding := true
 	columnBindingConfigured := false
+	graphNGConfigured := false
+	connectTimeout := uint64(0)
+	connectTimeoutConfigured := false
 	for _, part := range parts {
 		key, value, ok := strings.Cut(part, "=")
 		if ok && strings.EqualFold(strings.TrimSpace(key), "GraphNGUnicodeResults") {
+			graphNGConfigured = true
 			switch strings.ToLower(strings.TrimSpace(value)) {
 			case "1", "true", "yes", "on":
 				unicodeResults = true
@@ -78,6 +105,7 @@ func parseDriverOptions(dsn string) (string, bool, api.SQLSMALLINT, string, bool
 			continue
 		}
 		if ok && strings.EqualFold(strings.TrimSpace(key), "GraphNGUnicodeCType") {
+			graphNGConfigured = true
 			switch strings.ToLower(strings.TrimSpace(value)) {
 			case "char", "sql_c_char":
 				unicodeCType = api.SQLSMALLINT(api.SQL_C_CHAR)
@@ -87,6 +115,7 @@ func parseDriverOptions(dsn string) (string, bool, api.SQLSMALLINT, string, bool
 			continue
 		}
 		if ok && strings.EqualFold(strings.TrimSpace(key), "GraphNGSQLTextEncoding") {
+			graphNGConfigured = true
 			switch strings.ToLower(strings.TrimSpace(value)) {
 			case "utf8", "utf-8", "char", "ansi", "narrow":
 				sqlTextEncoding = "utf8"
@@ -96,6 +125,7 @@ func parseDriverOptions(dsn string) (string, bool, api.SQLSMALLINT, string, bool
 			continue
 		}
 		if ok && strings.EqualFold(strings.TrimSpace(key), "GraphNGColumnBinding") {
+			graphNGConfigured = true
 			switch strings.ToLower(strings.TrimSpace(value)) {
 			case "1", "true", "yes", "on", "enabled":
 				columnBinding = true
@@ -106,17 +136,32 @@ func parseDriverOptions(dsn string) (string, bool, api.SQLSMALLINT, string, bool
 			}
 			continue
 		}
+		if ok && strings.EqualFold(strings.TrimSpace(key), "GraphNGConnectTimeout") {
+			graphNGConfigured = true
+			if seconds, err := strconv.ParseUint(strings.TrimSpace(value), 10, 32); err == nil {
+				connectTimeout = seconds
+				connectTimeoutConfigured = true
+			}
+			continue
+		}
 		kept = append(kept, part)
 	}
-	if unicodeResults && !columnBindingConfigured {
+	if graphNGConfigured && !columnBindingConfigured {
 		// SQLBindCol lets the native driver retain Go buffer pointers between
-		// cgo calls. GraphNG's Cache/IRIS path uses SQLGetData instead.
+		// cgo calls. GraphNG uses SQLGetData for every result mode instead.
 		columnBinding = false
 	}
-	return strings.Join(kept, ";"), unicodeResults, unicodeCType, sqlTextEncoding, columnBinding
+	if graphNGConfigured && !connectTimeoutConfigured {
+		connectTimeout = 10
+	}
+	return strings.Join(kept, ";"), unicodeResults, unicodeCType, sqlTextEncoding, columnBinding, connectTimeout
 }
 
 func (c *Conn) Close() (err error) {
+	if c.serializedLife {
+		connectMu.Lock()
+		defer connectMu.Unlock()
+	}
 	if c.tx != nil {
 		c.tx.Rollback()
 	}
