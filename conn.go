@@ -42,6 +42,7 @@ func (d *Driver) Open(dsn string) (driver.Conn, error) {
 	// for other consumers of this driver.
 	serializedLife := strings.Contains(strings.ToLower(dsn), "graphng")
 	if serializedLife {
+		api.EnableNativeCallSerialization()
 		connectMu.Lock()
 		defer connectMu.Unlock()
 	}
