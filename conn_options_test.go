@@ -119,3 +119,25 @@ func TestParseDriverOptionsAllowsDisablingGraphNGConnectTimeout(t *testing.T) {
 		t.Fatalf("connectTimeout = %d, want 0", connectTimeout)
 	}
 }
+
+func TestIncompatibleInterSystemsDriver(t *testing.T) {
+	tests := map[string]bool{
+		"Driver=Cacheu35;Server=127.0.0.1":                          true,
+		"Driver={Cacheu};Server=127.0.0.1":                          true,
+		"Driver=/usr/cache/bin/libcacheodbcu35.so;Server=localhost": true,
+		"Driver=Iris;Server=127.0.0.1":                              true,
+		"Driver=/usr/irissys/bin/libirisodbc35.so;Server=localhost": true,
+		"Driver=Cacheur6435;Server=127.0.0.1":                       false,
+		"Driver=/usr/cache/bin/libcacheodbcur6435.so":               false,
+		"Driver=Iris6435;Server=127.0.0.1":                          false,
+	}
+	for dsn, want := range tests {
+		driver, got := incompatibleInterSystemsDriver(dsn)
+		if got != want {
+			t.Fatalf("incompatibleInterSystemsDriver(%q) = %q, %v; want match %v", dsn, driver, got, want)
+		}
+		if got && driver == "" {
+			t.Fatalf("incompatibleInterSystemsDriver(%q) returned an empty driver", dsn)
+		}
+	}
+}

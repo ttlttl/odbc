@@ -8,6 +8,7 @@ import (
 	"context"
 	"database/sql/driver"
 	"errors"
+	"fmt"
 	"runtime"
 	"strconv"
 	"strings"
@@ -36,6 +37,10 @@ func (d *Driver) Open(dsn string) (driver.Conn, error) {
 	if d.initErr != nil {
 		return nil, d.initErr
 	}
+	odbcDSN, unicodeResults, unicodeCType, sqlTextEncoding, columnBinding, connectTimeout := parseDriverOptions(dsn)
+	if legacyDriver, ok := incompatibleInterSystemsDriver(odbcDSN); ok && runtime.GOOS != "windows" && unsafe.Sizeof(api.SQLLEN(0)) == 8 {
+		return nil, fmt.Errorf("legacy InterSystems ODBC driver %q is incompatible with %d-byte SQLLEN; use the ur64 driver", legacyDriver, unsafe.Sizeof(api.SQLLEN(0)))
+	}
 
 	// Some legacy ODBC drivers mutate process-global state while connecting.
 	// Serialize GraphNG connection lifecycle calls without changing behavior
@@ -55,7 +60,6 @@ func (d *Driver) Open(dsn string) (driver.Conn, error) {
 	h := api.SQLHDBC(out)
 	drv.Stats.updateHandleCount(api.SQL_HANDLE_DBC, 1)
 
-	odbcDSN, unicodeResults, unicodeCType, sqlTextEncoding, columnBinding, connectTimeout := parseDriverOptions(dsn)
 	if connectTimeout > 0 {
 		ret = api.SQLSetConnectUIntPtrAttr(h, api.SQL_ATTR_LOGIN_TIMEOUT, uintptr(connectTimeout), 0)
 		if IsError(ret) {
@@ -82,6 +86,28 @@ func (d *Driver) Open(dsn string) (driver.Conn, error) {
 		columnBinding:    columnBinding,
 		serializedLife:   serializedLife,
 	}, nil
+}
+
+func incompatibleInterSystemsDriver(dsn string) (string, bool) {
+	for _, part := range strings.Split(dsn, ";") {
+		key, value, ok := strings.Cut(part, "=")
+		if !ok || !strings.EqualFold(strings.TrimSpace(key), "Driver") {
+			continue
+		}
+		configuredDriver := strings.Trim(strings.TrimSpace(value), "{}")
+		driverName := strings.ToLower(configuredDriver)
+		if slash := strings.LastIndexAny(driverName, "/\\"); slash >= 0 {
+			driverName = driverName[slash+1:]
+		}
+		switch driverName {
+		case "cache", "cache35", "cacheu", "cacheu35", "cacheuw", "cacheuw35",
+			"iris", "iris35", "irisu", "irisu35", "irisuw", "irisuw35",
+			"libcacheodbc.so", "libcacheodbc35.so", "libcacheodbcu.so", "libcacheodbcu35.so", "libcacheodbcuw.so", "libcacheodbcuw35.so",
+			"libirisodbc.so", "libirisodbc35.so", "libirisodbcu.so", "libirisodbcu35.so", "libirisodbcuw.so", "libirisodbcuw35.so":
+			return configuredDriver, true
+		}
+	}
+	return "", false
 }
 
 func parseDriverOptions(dsn string) (string, bool, api.SQLSMALLINT, string, bool, uint64) {
