@@ -4,6 +4,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 func TestNativeCallLockSerializesCallers(t *testing.T) {
@@ -44,5 +45,37 @@ func TestNativeCallLockSerializesCallers(t *testing.T) {
 
 	if maxActive != 1 {
 		t.Fatalf("maximum concurrent native calls = %d, want 1", maxActive)
+	}
+}
+
+func TestSQLCancelUsesNativeCallLock(t *testing.T) {
+	EnableNativeCallSerialization()
+
+	unlock := lockNativeCall()
+	started := make(chan struct{})
+	entered := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		close(started)
+		serializedSQLCancel(SQLHSTMT(SQL_NULL_HSTMT), func(SQLHSTMT) SQLRETURN {
+			close(entered)
+			return SQL_SUCCESS
+		})
+	}()
+	<-started
+
+	select {
+	case <-entered:
+		unlock()
+		t.Fatal("SQLCancel entered the native driver while another call held the serialization lock")
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	unlock()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("SQLCancel did not proceed after the serialization lock was released")
 	}
 }

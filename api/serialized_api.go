@@ -40,9 +40,16 @@ func SQLBindParameter(statementHandle SQLHSTMT, parameterNumber SQLUSMALLINT, in
 	return nativeSQLBindParameter(statementHandle, parameterNumber, inputOutputType, valueType, parameterType, columnSize, decimalDigits, parameterValue, bufferLength, ind)
 }
 
-// SQLCancel must remain callable while an executing statement owns the lock.
 func SQLCancel(statementHandle SQLHSTMT) SQLRETURN {
-	return nativeSQLCancel(statementHandle)
+	return serializedSQLCancel(statementHandle, nativeSQLCancel)
+}
+
+func serializedSQLCancel(statementHandle SQLHSTMT, cancel func(SQLHSTMT) SQLRETURN) SQLRETURN {
+	// Legacy drivers that require serialization cannot safely process a cancel
+	// concurrently with SQLFetch, SQLGetData, or another native call. Waiting
+	// may delay context cancellation, but avoids corrupting driver state.
+	defer lockNativeCall()()
+	return cancel(statementHandle)
 }
 
 func SQLCloseCursor(statementHandle SQLHSTMT) SQLRETURN {

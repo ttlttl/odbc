@@ -256,6 +256,122 @@ func TestIRISConcurrentMultiColumnQuery(t *testing.T) {
 	t.Logf("read %d multi-column rows in %s with %d workers", operations.Load(), duration, workers)
 }
 
+func TestIRISConcurrentFetchAndCancel(t *testing.T) {
+	dsn := os.Getenv("ODBC_IRIS_TEST_DSN")
+	query := os.Getenv("ODBC_IRIS_MULTI_COLUMN_QUERY")
+	cancelQuery := os.Getenv("ODBC_IRIS_CANCEL_QUERY")
+	if dsn == "" || query == "" || cancelQuery == "" {
+		t.Skip("ODBC_IRIS_TEST_DSN, ODBC_IRIS_MULTI_COLUMN_QUERY, and ODBC_IRIS_CANCEL_QUERY are required")
+	}
+
+	duration := integrationDuration(t, "ODBC_IRIS_TEST_DURATION", 30*time.Second)
+	workers := integrationWorkers(t, "ODBC_IRIS_TEST_WORKERS", 8)
+	cancelTimeout := integrationDuration(t, "ODBC_IRIS_CANCEL_TIMEOUT", 100*time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), duration)
+	defer cancel()
+
+	db, err := sql.Open("odbc", dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	db.SetMaxOpenConns(workers + 1)
+	db.SetMaxIdleConns(workers + 1)
+	defer db.Close()
+
+	var fetches atomic.Int64
+	var cancellations atomic.Int64
+	firstFetch := make(chan struct{}, 1)
+	errorsCh := make(chan error, workers+1)
+	var wg sync.WaitGroup
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for ctx.Err() == nil {
+				rows, err := db.QueryContext(ctx, query)
+				if err != nil {
+					reportIntegrationError(ctx, errorsCh, err)
+					return
+				}
+				columns, err := rows.Columns()
+				if err != nil {
+					rows.Close()
+					reportIntegrationError(ctx, errorsCh, err)
+					return
+				}
+				values := make([]interface{}, len(columns))
+				dest := make([]interface{}, len(columns))
+				for i := range values {
+					dest[i] = &values[i]
+				}
+				for rows.Next() {
+					if err := rows.Scan(dest...); err != nil {
+						rows.Close()
+						reportIntegrationError(ctx, errorsCh, err)
+						return
+					}
+					fetches.Add(1)
+					select {
+					case firstFetch <- struct{}{}:
+					default:
+					}
+				}
+				err = rows.Err()
+				closeErr := rows.Close()
+				if err != nil {
+					reportIntegrationError(ctx, errorsCh, err)
+					return
+				}
+				if closeErr != nil {
+					reportIntegrationError(ctx, errorsCh, closeErr)
+					return
+				}
+			}
+		}()
+	}
+	select {
+	case <-firstFetch:
+	case <-ctx.Done():
+		wg.Wait()
+		close(errorsCh)
+		for err := range errorsCh {
+			t.Error(err)
+		}
+		t.Fatal("fetch-and-cancel stress test could not read an initial row")
+	}
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for ctx.Err() == nil {
+			queryCtx, queryCancel := context.WithTimeout(ctx, cancelTimeout)
+			rows, err := db.QueryContext(queryCtx, cancelQuery)
+			queryCancel()
+			if rows != nil {
+				rows.Close()
+			}
+			if err != nil && !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, context.Canceled) {
+				reportIntegrationError(ctx, errorsCh, err)
+				return
+			}
+			cancellations.Add(1)
+		}
+	}()
+
+	wg.Wait()
+	close(errorsCh)
+	for err := range errorsCh {
+		t.Error(err)
+	}
+	if fetches.Load() == 0 {
+		t.Fatal("fetch-and-cancel stress test completed without reading a row")
+	}
+	if cancellations.Load() == 0 {
+		t.Fatal("fetch-and-cancel stress test completed without a cancellation attempt")
+	}
+	t.Logf("read %d rows alongside %d cancellation attempts in %s", fetches.Load(), cancellations.Load(), duration)
+}
+
 func reportIntegrationError(ctx context.Context, errorsCh chan<- error, err error) {
 	if ctx.Err() != nil {
 		return
