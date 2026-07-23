@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -173,6 +174,7 @@ func TestIRISConcurrentMultiColumnQuery(t *testing.T) {
 	var operations atomic.Int64
 	errorsCh := make(chan error, workers+len(dsns))
 	var wg sync.WaitGroup
+	startForcedGC(ctx, &wg)
 	for i := 0; i < workers; i++ {
 		db := dbs[i%len(dbs)]
 		wg.Add(1)
@@ -256,6 +258,23 @@ func TestIRISConcurrentMultiColumnQuery(t *testing.T) {
 	t.Logf("read %d multi-column rows in %s with %d workers", operations.Load(), duration, workers)
 }
 
+func startForcedGC(ctx context.Context, wg *sync.WaitGroup) {
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		ticker := time.NewTicker(10 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				runtime.GC()
+			}
+		}
+	}()
+}
+
 func TestIRISConcurrentFetchAndCancel(t *testing.T) {
 	dsn := os.Getenv("ODBC_IRIS_TEST_DSN")
 	query := os.Getenv("ODBC_IRIS_MULTI_COLUMN_QUERY")
@@ -283,6 +302,7 @@ func TestIRISConcurrentFetchAndCancel(t *testing.T) {
 	firstFetch := make(chan struct{}, 1)
 	errorsCh := make(chan error, workers+1)
 	var wg sync.WaitGroup
+	startForcedGC(ctx, &wg)
 	for i := 0; i < workers; i++ {
 		wg.Add(1)
 		go func() {

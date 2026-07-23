@@ -95,6 +95,7 @@ func (s *ODBCStmt) closeByRows() error {
 			if IsError(ret) {
 				return NewError("SQLCloseCursor", s.h)
 			}
+			s.closeColumns()
 			return nil
 		} else {
 			return s.releaseHandle()
@@ -106,7 +107,24 @@ func (s *ODBCStmt) closeByRows() error {
 func (s *ODBCStmt) releaseHandle() error {
 	h := s.h
 	s.h = api.SQLHSTMT(api.SQL_NULL_HSTMT)
-	return releaseHandle(h)
+	err := releaseHandle(h)
+	if err == nil {
+		s.closeColumns()
+	}
+	return err
+}
+
+type getDataBufferCloser interface {
+	closeGetDataBuffer()
+}
+
+func (s *ODBCStmt) closeColumns() {
+	for _, column := range s.Cols {
+		if closer, ok := column.(getDataBufferCloser); ok {
+			closer.closeGetDataBuffer()
+		}
+	}
+	s.Cols = nil
 }
 
 var testingIssue5 bool // used during tests
@@ -173,6 +191,9 @@ func (s *ODBCStmt) useNarrowSQLText() bool {
 }
 
 func (s *ODBCStmt) BindColumns() error {
+	// A statement can be reused or advance to another result set. The prior
+	// result's native buffers are no longer reachable by the driver here.
+	s.closeColumns()
 	// count columns
 	var n api.SQLSMALLINT
 	ret := api.SQLNumResultCols(s.h, &n)
@@ -213,6 +234,7 @@ func columnForBindingMode(column Column, enabled bool) Column {
 		return column
 	}
 	if bindable, ok := column.(*BindableColumn); ok && bindable.IsVariableWidth {
+		bindable.closeGetDataBuffer()
 		return NewNonBindableColumn(bindable.BaseColumn, bindable.CType)
 	}
 	return column

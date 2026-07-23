@@ -45,10 +45,8 @@ func (l *BufferLen) Int() (int, bool) {
 	return int(n), true
 }
 
-func (l *BufferLen) GetData(h api.SQLHSTMT, idx int, ctype api.SQLSMALLINT, buf []byte) api.SQLRETURN {
-	return api.SQLGetData(h, api.SQLUSMALLINT(idx+1), ctype,
-		api.SQLPOINTER(unsafe.Pointer(&buf[0])), api.SQLLEN(len(buf)),
-		(*api.SQLLEN)(l))
+func (l *BufferLen) GetData(h api.SQLHSTMT, idx int, ctype api.SQLSMALLINT, buf []byte, nativeBuffer *api.SQLGetDataBuffer) (api.SQLRETURN, error) {
+	return nativeBuffer.GetData(h, api.SQLUSMALLINT(idx+1), ctype, buf, (*api.SQLLEN)(l))
 }
 
 func (l *BufferLen) Bind(h api.SQLHSTMT, idx int, ctype api.SQLSMALLINT, buf []byte) api.SQLRETURN {
@@ -378,13 +376,18 @@ type BindableColumn struct {
 	Size            int
 	Len             BufferLen
 	Buffer          []byte
+	getDataBuffer   *api.SQLGetDataBuffer
 }
 
 // TODO(brainman): BindableColumn.Buffer is used by external code after external code returns - that needs to be avoided in the future
 
 func NewBindableColumn(b *BaseColumn, ctype api.SQLSMALLINT, bufSize int) *BindableColumn {
 	b.CType = ctype
-	c := &BindableColumn{BaseColumn: b, Size: bufSize}
+	c := &BindableColumn{
+		BaseColumn:    b,
+		Size:          bufSize,
+		getDataBuffer: api.NewSQLGetDataBuffer(),
+	}
 	l := 8 // always use small starting buffer
 	if c.Size > l {
 		l = c.Size
@@ -396,7 +399,7 @@ func NewBindableColumn(b *BaseColumn, ctype api.SQLSMALLINT, bufSize int) *Binda
 func NewVariableWidthColumn(b *BaseColumn, ctype api.SQLSMALLINT, colWidth api.SQLULEN) (Column, error) {
 	if colWidth == 0 || colWidth > 1024 {
 		b.CType = ctype
-		return &NonBindableColumn{b}, nil
+		return NewNonBindableColumn(b, ctype), nil
 	}
 	l := int(colWidth)
 	switch ctype {
@@ -440,7 +443,10 @@ func (c *BindableColumn) BeforeFetch() {
 
 func (c *BindableColumn) Value(h api.SQLHSTMT, idx int) (driver.Value, error) {
 	if !c.IsBound {
-		ret := c.Len.GetData(h, idx, c.CType, c.Buffer)
+		ret, err := c.Len.GetData(h, idx, c.CType, c.Buffer, c.getDataBuffer)
+		if err != nil {
+			return nil, fmt.Errorf("column #%d SQLGetData failed: %w", idx, err)
+		}
 		if IsError(ret) {
 			return nil, NewError("SQLGetData", h)
 		}
@@ -465,16 +471,24 @@ func (c *BindableColumn) Value(h api.SQLHSTMT, idx int) (driver.Value, error) {
 	return c.BaseColumn.Value(c.Buffer[:n])
 }
 
+func (c *BindableColumn) closeGetDataBuffer() {
+	c.getDataBuffer.Close()
+}
+
 // NonBindableColumn provide access to columns, that can't be bound.
 // These are of character or binary type, and, usually, there is no
 // limit for their width.
 type NonBindableColumn struct {
 	*BaseColumn
+	getDataBuffer *api.SQLGetDataBuffer
 }
 
 func NewNonBindableColumn(b *BaseColumn, ctype api.SQLSMALLINT) *NonBindableColumn {
 	b.CType = ctype
-	return &NonBindableColumn{b}
+	return &NonBindableColumn{
+		BaseColumn:    b,
+		getDataBuffer: api.NewSQLGetDataBuffer(),
+	}
 }
 
 func (c *NonBindableColumn) Bind(h api.SQLHSTMT, idx int) (bool, error) {
@@ -488,7 +502,10 @@ func (c *NonBindableColumn) Value(h api.SQLHSTMT, idx int) (driver.Value, error)
 	b := make([]byte, 1024)
 loop:
 	for {
-		ret := l.GetData(h, idx, c.CType, b)
+		ret, err := l.GetData(h, idx, c.CType, b, c.getDataBuffer)
+		if err != nil {
+			return nil, fmt.Errorf("column #%d SQLGetData failed: %w", idx, err)
+		}
 		switch ret {
 		case api.SQL_SUCCESS:
 			done, null, err := c.appendGetDataResult(idx, &total, b, l, false)
@@ -531,6 +548,10 @@ loop:
 		return nil, nil
 	}
 	return c.BaseColumn.Value(total)
+}
+
+func (c *NonBindableColumn) closeGetDataBuffer() {
+	c.getDataBuffer.Close()
 }
 
 func (c *NonBindableColumn) appendGetDataResult(idx int, total *[]byte, b []byte, l BufferLen, truncated bool) (bool, bool, error) {
